@@ -10,6 +10,12 @@ export interface Config {
   port: number;
   /** Telegram bot token — used to derive the HMAC key for initData. Secret. */
   botToken: string;
+  /**
+   * Secret token configured on the Telegram webhook (setWebhook secret_token).
+   * Telegram echoes it in the X-Telegram-Bot-Api-Secret-Token header so we can
+   * reject forged webhook calls. Secret.
+   */
+  webhookSecret: string;
   /** GCP project hosting Firestore + the video bucket. */
   projectId: string;
   /** The single GCS bucket the service is allowed to mint signed URLs for. */
@@ -39,6 +45,7 @@ export function loadConfig(): Config {
   return {
     port: Number(process.env.PORT ?? "8080"),
     botToken: required("TELEGRAM_BOT_TOKEN", "dry-run-bot-token"),
+    webhookSecret: required("TELEGRAM_WEBHOOK_SECRET", "dry-run-webhook-secret"),
     projectId: required("GCP_PROJECT_ID", "dry-run-project"),
     videoBucket: required("VIDEO_BUCKET", "dry-run-bucket"),
     signerServiceAccount: process.env.SIGNER_SERVICE_ACCOUNT ?? "",

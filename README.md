@@ -9,11 +9,11 @@ App. Two **independently deployed** components:
 | [`control-agent/`](./control-agent) | A separate VPS, behind Tailscale | Operational watchdog: health heartbeat, bucket thumbnail audit, Telegram alerts |
 | [`terraform/`](./terraform) | — | Plan-ready infra: bucket, Firestore, Cloud Run, scoped IAM |
 
-> **Status: skeleton.** The Telegram initData HMAC auth is implemented and
-> tested. Payment and video logic are intentionally deferred — the manifest
-> signed-URL minting and the Stars payment webhook are stubs (return `501`)
-> until the skeleton's dry run is signed off and the **entitlement schema is
-> reviewed**. See "Deferred work" below.
+> **Status: skeleton + payments.** The Telegram initData HMAC auth and the
+> Stars payment webhook (idempotent entitlement writes) are implemented and
+> tested against the reviewed entitlement schema. The remaining deferred piece
+> is the manifest V4 signed-URL minting ("video logic"), which returns `501`
+> until enabled. See "Deferred work" below.
 
 ## ⚠️ Security boundary between the two components — READ THIS
 
@@ -52,8 +52,9 @@ Endpoints:
   returns a 10-minute V4 signed URL for the HLS manifest. **Wired; signing is a
   deferred stub (501).**
 - `POST /webhook/stars-payment` — handles Telegram Stars `successful_payment`,
-  idempotent on `telegram_payment_charge_id`, writes entitlement to Firestore.
-  **Deliberately not implemented — pending schema review (501).**
+  authenticated via the webhook secret-token header, idempotent on
+  `telegram_payment_charge_id`, writes the entitlement to Firestore.
+  **Implemented** against the reviewed schema (see below).
 - `GET /healthz` — liveness/readiness, polled by the control-agent.
 
 All state lives in Firestore; the service holds none. See
@@ -76,13 +77,20 @@ only after **2 consecutive** failures (never on the first, and it does not
 auto-restart). Ships one skill, `gcs-thumbnail-audit`, that reports videos
 missing a thumbnail. Must run behind Tailscale; gateway never binds `0.0.0.0`.
 
+## Entitlement schema (reviewed)
+
+`entitlements/{telegramUserId}__{videoId}` — one doc per user+video, permanent
+(no expiry). Fields: `telegramUserId`, `videoId`, `source` (`stars`|`manual`),
+`telegramPaymentChargeId`, `amount`, `currency` (`XTR`), `grantedAt`.
+Idempotency comes from the doc id: a webhook retry or repeat purchase of the
+same video is a transactional no-op. Full detail in
+[`delivery-service/README.md`](./delivery-service/README.md#entitlement-schema-firestore).
+
 ## Deferred work (do not start without sign-off)
 
-1. **Stars payment webhook** — needs the **entitlement schema reviewed** first.
-   `delivery-service/src/firestore.ts` carries a `DRAFT` `Entitlement` shape and
-   the write path throws "pending schema review".
-2. **Manifest signed-URL minting** ("video logic") — wired in
-   `src/storage.ts` as a stub; enable once the dry run is signed off.
+1. **Manifest signed-URL minting** ("video logic") — wired in
+   `src/storage.ts` as a stub; the `/manifest` route returns `501` until it is
+   enabled. Turn this on once you're ready to serve real HLS manifests.
 
 ## Repository layout
 

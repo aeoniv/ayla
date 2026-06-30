@@ -9,7 +9,7 @@ Firestore; the container holds none, so any revision is interchangeable.
 |---|---|---|---|
 | `POST` | `/auth/telegram` | **implemented** | Validates `initData` HMAC-SHA256 against the bot token; rejects anything else. |
 | `GET`  | `/manifest/:videoId` | wired, **signing stubbed (501)** | Auth via `Authorization: tma <initData>`, Firestore entitlement check, then a 10-min V4 signed URL. |
-| `POST` | `/webhook/stars-payment` | **deferred (501)** | Stars `successful_payment`, idempotent on `telegram_payment_charge_id`. Pending entitlement-schema review. |
+| `POST` | `/webhook/stars-payment` | **implemented** | Stars `successful_payment`. Authenticated by the webhook secret-token header, idempotent on `telegram_payment_charge_id`, writes the entitlement to Firestore. |
 | `GET`  | `/healthz` | implemented | Liveness/readiness for the control-agent. |
 
 ## Layout
@@ -19,15 +19,43 @@ src/
   index.ts            # Express app + route wiring + /healthz
   config.ts           # env-only config (stateless)
   auth/telegram.ts    # initData HMAC validation  (implemented + tested)
-  firestore.ts        # entitlement store; Entitlement schema is DRAFT
+  firestore.ts        # entitlement store + final Entitlement schema
+  payments/stars.ts   # Stars successful_payment parsing (tested)
   storage.ts          # V4 signed-URL signer      (deferred stub)
   routes/
     auth.ts           # POST /auth/telegram
     manifest.ts       # GET  /manifest/:videoId
-    starsWebhook.ts   # POST /webhook/stars-payment  (deferred)
+    starsWebhook.ts   # POST /webhook/stars-payment  (implemented)
 test/
   telegram.test.ts    # HMAC accept/reject/expiry cases
+  stars.test.ts       # payment parsing + idempotency
 ```
+
+## Entitlement schema (Firestore)
+
+```
+collection: entitlements
+doc id:     `${telegramUserId}__${videoId}`   # one doc per user+video
+fields:
+  telegramUserId          number
+  videoId                 string
+  source                  "stars" | "manual"
+  telegramPaymentChargeId string   # Telegram's idempotency key
+  amount                  number   # Stars (XTR), integer
+  currency                string   # "XTR"
+  grantedAt               timestamp (server-set)
+```
+
+Entitlements are permanent (no expiry). Idempotency comes from the doc id: a
+webhook retry or repeat purchase of the same video resolves to the same
+document and is a no-op (the write runs in a transaction).
+
+### Webhook auth & invoice payload
+
+The webhook authenticates via the `X-Telegram-Bot-Api-Secret-Token` header
+(`TELEGRAM_WEBHOOK_SECRET`, set as `secret_token` on `setWebhook`). The bot must
+create invoices with `invoice_payload` of the form `vod:<videoId>` so the
+payment can be mapped to a video.
 
 ## Local dry run
 
@@ -59,6 +87,6 @@ attached runtime service account (ADC) — no key files.
 
 ## Deferred (do not implement without sign-off)
 
-- `src/storage.ts` `signManifestUrl` — the V4 signing ("video logic").
-- `src/routes/starsWebhook.ts` + `firestore.ts` `grantEntitlement` — the
-  payment write path, pending **entitlement-schema review**.
+- `src/storage.ts` `signManifestUrl` — the V4 signing ("video logic"). The
+  `/manifest` route is wired (auth + entitlement check) but returns `501` until
+  this is enabled.

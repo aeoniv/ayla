@@ -102,6 +102,22 @@ resource "google_secret_manager_secret_iam_member" "delivery_bot_token" {
   member    = "serviceAccount:${google_service_account.delivery.email}"
 }
 
+# Webhook secret_token — echoed by Telegram so the service can reject forged
+# webhook calls. Same scoped, read-only access for the runtime SA.
+resource "google_secret_manager_secret" "webhook_secret" {
+  secret_id = var.webhook_secret_id
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.enabled]
+}
+
+resource "google_secret_manager_secret_iam_member" "delivery_webhook_secret" {
+  secret_id = google_secret_manager_secret.webhook_secret.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.delivery.email}"
+}
+
 # ---------------------------------------------------------------------------
 # Cloud Run service (stateless). min-instances is configurable per spec.
 # ---------------------------------------------------------------------------
@@ -147,11 +163,21 @@ resource "google_cloud_run_v2_service" "delivery" {
           }
         }
       }
+      env {
+        name = "TELEGRAM_WEBHOOK_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.webhook_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
     }
   }
 
   depends_on = [
     google_project_service.enabled,
     google_secret_manager_secret_iam_member.delivery_bot_token,
+    google_secret_manager_secret_iam_member.delivery_webhook_secret,
   ]
 }

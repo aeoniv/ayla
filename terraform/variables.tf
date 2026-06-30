@@ -49,3 +49,9 @@ variable "bot_token_secret_id" {
   description = "Secret Manager secret id holding the Telegram bot token."
   default     = "telegram-bot-token"
 }
+
+variable "webhook_secret_id" {
+  type        = string
+  description = "Secret Manager secret id holding the Telegram webhook secret_token."
+  default     = "telegram-webhook-secret"
+}

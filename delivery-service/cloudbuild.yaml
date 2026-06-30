@@ -52,7 +52,7 @@ steps:
       - "--max-instances=${_MAX_INSTANCES}"
       - "--no-allow-unauthenticated"
       - "--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID},VIDEO_BUCKET=${_VIDEO_BUCKET},SIGNER_SERVICE_ACCOUNT=${_SIGNER_SERVICE_ACCOUNT},SIGNED_URL_TTL_SECONDS=600"
-      - "--set-secrets=TELEGRAM_BOT_TOKEN=telegram-bot-token:latest"
+      - "--set-secrets=TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest"
 
 options:
   logging: CLOUD_LOGGING_ONLY
