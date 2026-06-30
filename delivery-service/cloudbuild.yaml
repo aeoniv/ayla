@@ -1,0 +1,58 @@
+# Cloud Build pipeline: build the container, push to Artifact Registry, deploy
+# to Cloud Run. No secrets are baked into the image — the bot token is supplied
+# at deploy time from Secret Manager, and Firestore/GCS auth comes from the
+# attached runtime service account (ADC).
+#
+# Trigger with substitutions, e.g.:
+#   gcloud builds submit --config cloudbuild.yaml \
+#     --substitutions=_REGION=us-central1,_MIN_INSTANCES=1,_SERVICE_ACCOUNT=delivery-sa@PROJECT.iam.gserviceaccount.com
+#
+# _MIN_INSTANCES makes Cloud Run min-instances configurable per the spec.
+
+substitutions:
+  _REGION: "us-central1"
+  _SERVICE_NAME: "delivery-service"
+  _REPO: "delivery"
+  _MIN_INSTANCES: "0"
+  _MAX_INSTANCES: "10"
+  _VIDEO_BUCKET: "REPLACE_ME-vod-bucket"
+  _SERVICE_ACCOUNT: "REPLACE_ME@PROJECT_ID.iam.gserviceaccount.com"
+  _SIGNER_SERVICE_ACCOUNT: "REPLACE_ME@PROJECT_ID.iam.gserviceaccount.com"
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:${SHORT_SHA}"
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:${SHORT_SHA}"
+      - "."
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:${SHORT_SHA}"
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - "${_SERVICE_NAME}"
+      - "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE_NAME}:${SHORT_SHA}"
+      - "--region=${_REGION}"
+      - "--platform=managed"
+      - "--service-account=${_SERVICE_ACCOUNT}"
+      - "--min-instances=${_MIN_INSTANCES}"
+      - "--max-instances=${_MAX_INSTANCES}"
+      - "--no-allow-unauthenticated"
+      - "--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID},VIDEO_BUCKET=${_VIDEO_BUCKET},SIGNER_SERVICE_ACCOUNT=${_SIGNER_SERVICE_ACCOUNT},SIGNED_URL_TTL_SECONDS=600"
+      - "--set-secrets=TELEGRAM_BOT_TOKEN=telegram-bot-token:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
