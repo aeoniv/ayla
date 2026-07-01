@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     gcs_bucket: str = ""
     # How long signed video URLs stay valid (seconds).
     signed_url_ttl_seconds: int = 3600
+    # On Cloud Run the runtime SA has no private key; V4 signing goes through the
+    # IAM signBlob API. Set to the runtime SA email to enable keyless signing.
+    # Leave empty locally (ADC/key file signs directly).
+    signer_service_account: str = ""
 
     # Session tokens
     session_secret: str = "dev-only-change-me"
