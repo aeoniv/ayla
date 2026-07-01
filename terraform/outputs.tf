@@ -13,6 +13,16 @@ output "cloud_run_url" {
   value       = google_cloud_run_v2_service.delivery.uri
 }
 
+output "pose_service_account" {
+  description = "Runtime identity for the pose-scoring-service."
+  value       = google_service_account.pose.email
+}
+
+output "pose_service_url" {
+  description = "pose-scoring-service HTTPS endpoint."
+  value       = google_cloud_run_v2_service.pose.uri
+}
+
 output "firestore_database" {
   description = "Firestore database name."
   value       = google_firestore_database.default.name

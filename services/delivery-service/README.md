@@ -70,6 +70,14 @@ Scope the Cloud Run runtime SA to exactly:
 
 Nothing else — no project-wide storage admin, no other buckets.
 
+## Known follow-up — Cloud Run V4 signed URLs
+On Cloud Run the runtime SA has no private key, so `blob.generate_signed_url`
+must sign via the IAM `signBlob` API using `SIGNER_SERVICE_ACCOUNT` (which
+terraform sets and grants `tokenCreator` on itself). `app/gcs.py` currently
+calls `generate_signed_url` directly; wire it to impersonate the signer SA
+(google-auth `iam.Signer`) before serving real signed URLs in production.
+Locally with a key/ADC it works as-is.
+
 ## GCS is empty until Phase 3
 No videos exist yet. `/feed` and `/variants` return empty lists until the Phase 3
 authoring flow uploads content. That is expected, not a bug.

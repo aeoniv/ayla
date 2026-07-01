@@ -1,0 +1,49 @@
+# Ayla control-agent — OpenClaw configuration.
+#
+# Operations tool for the OWNER only. It does not interact with students and is
+# not part of the app. Two agents with strictly separated privileges.
+#
+# NOTE ON FIELD NAMES: adjust to your installed OpenClaw version if keys differ;
+# the security-relevant intent (Tailscale-only bind, read-only monitor, manual-
+# only deploy, privilege separation) is what must be preserved.
+
+gateway:
+  # NEVER 0.0.0.0. Bind only to this host's Tailscale interface IP so the
+  # control API is reachable only over the tailnet.
+  bind_address: "${TAILSCALE_IP}"   # e.g. 100.x.y.z — must be the tailscale0 IP
+  port: 8787
+  # Defense in depth: even if misconfigured, refuse to start on a public iface.
+  deny_bind_addresses: ["0.0.0.0", "::", ""]
+  require_tailscale: true
+
+agents:
+  # ---- read-only health monitor -------------------------------------------
+  - name: monitor
+    description: Polls service health, DMs the owner after 2 consecutive fails.
+    permissions:
+      # Read-only. No shell, no gcloud, no deploy, no restart.
+      allow_tools: ["http_get", "telegram_send"]
+      deny_tools: ["shell", "gcloud", "deploy", "fs_write"]
+    schedule:
+      every: "5m"
+    run:
+      command: ["python3", "monitor/health_monitor.py"]
+    # The monitor runs as a persistent process; `schedule` documents cadence,
+    # the process itself loops every POLL_INTERVAL (default 300s).
+
+  # ---- manual-only deploy agent -------------------------------------------
+  - name: deploy
+    description: The only agent with gcloud deploy rights. Manual trigger only.
+    permissions:
+      allow_tools: ["shell", "gcloud"]
+    trigger:
+      manual_only: true      # never scheduled, never auto-invoked
+      schedule: null
+    run:
+      command: ["bash", "deploy/deploy.sh"]
+
+# Privilege separation summary:
+#   monitor  -> can observe, cannot change anything.
+#   deploy   -> can deploy, only when the owner runs it by hand.
+# Run these on SEPARATE OS users/hosts so the monitor's credentials never carry
+# deploy permission (see README).

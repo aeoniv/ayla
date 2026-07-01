@@ -1,0 +1,26 @@
+# systemd unit for the read-only health monitor.
+# Install: copy to /etc/systemd/system/, set EnvironmentFile, then
+#   systemctl enable --now ayla-monitor
+#
+# Runs as a dedicated unprivileged user with NO gcloud credentials.
+[Unit]
+Description=Ayla control-agent health monitor (read-only)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ayla-monitor
+EnvironmentFile=/etc/ayla/monitor.env
+WorkingDirectory=/opt/ayla/control-agent
+ExecStart=/usr/bin/python3 monitor/health_monitor.py
+Restart=always
+RestartSec=10
+# Hardening: this process never needs to write anything or escalate.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
