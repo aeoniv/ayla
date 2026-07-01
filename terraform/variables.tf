@@ -43,6 +43,24 @@ variable "owner_telegram_id" {
   description = "Hardcoded owner Telegram user id (gates the /admin authoring routes)."
 }
 
+variable "coaching_service_name" {
+  type        = string
+  description = "Cloud Run service name for the coaching-agent-service."
+  default     = "coaching-agent-service"
+}
+
+variable "coaching_container_image" {
+  type        = string
+  description = "Fully-qualified container image for the coaching-agent-service."
+  default     = "us-central1-docker.pkg.dev/REPLACE_ME/coaching/coaching-agent-service:latest"
+}
+
+variable "gemini_model" {
+  type        = string
+  description = "Gemini model id for coaching."
+  default     = "gemini-3.1-flash-lite"
+}
+
 variable "min_instances" {
   type        = number
   description = "Cloud Run min-instances (configurable per spec)."
@@ -83,4 +101,10 @@ variable "internal_api_key_secret_id" {
   type        = string
   description = "Secret Manager secret id for the delivery->pose /score/authoring key."
   default     = "ayla-internal-api-key"
+}
+
+variable "gemini_api_key_secret_id" {
+  type        = string
+  description = "Secret Manager secret id holding the Gemini API key (coaching)."
+  default     = "ayla-gemini-api-key"
 }

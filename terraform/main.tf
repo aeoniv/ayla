@@ -284,6 +284,97 @@ resource "google_cloud_run_v2_service" "delivery" {
 }
 
 # ---------------------------------------------------------------------------
+# coaching-agent-service — stateless AI coach (Gemini). Reads Firestore, no GCS.
+# ---------------------------------------------------------------------------
+resource "google_secret_manager_secret" "gemini_api_key" {
+  secret_id = var.gemini_api_key_secret_id
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.enabled]
+}
+
+resource "google_service_account" "coaching" {
+  account_id   = "coaching-agent-sa"
+  display_name = "Ayla coaching-agent-service (Cloud Run runtime)"
+}
+
+resource "google_project_iam_member" "coaching_firestore" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.coaching.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "coaching_gemini_key" {
+  secret_id = google_secret_manager_secret.gemini_api_key.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.coaching.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "coaching_session_secret" {
+  secret_id = google_secret_manager_secret.session_secret.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.coaching.email}"
+}
+
+resource "google_cloud_run_v2_service" "coaching" {
+  name                = var.coaching_service_name
+  location            = var.region
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = false
+
+  template {
+    service_account = google_service_account.coaching.email
+
+    scaling {
+      min_instance_count = var.min_instances
+      max_instance_count = var.max_instances
+    }
+
+    containers {
+      image = var.coaching_container_image
+
+      env {
+        name  = "GCP_PROJECT_ID"
+        value = var.project_id
+      }
+      env {
+        name  = "GEMINI_MODEL"
+        value = var.gemini_model
+      }
+      env {
+        name = "SESSION_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.session_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
+      env {
+        name = "GEMINI_API_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.gemini_api_key.secret_id
+            version = "latest"
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    google_project_service.enabled,
+    google_secret_manager_secret_iam_member.coaching_gemini_key,
+    google_secret_manager_secret_iam_member.coaching_session_secret,
+  ]
+
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image]
+  }
+}
+
+# ---------------------------------------------------------------------------
 # pose-scoring-service (stateless Cloud Run). Not publicly invocable; called by
 # delivery-service (authoring) and students with a valid session token.
 # ---------------------------------------------------------------------------

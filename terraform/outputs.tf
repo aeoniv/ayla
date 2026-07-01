@@ -23,6 +23,16 @@ output "pose_service_url" {
   value       = google_cloud_run_v2_service.pose.uri
 }
 
+output "coaching_service_account" {
+  description = "Runtime identity for the coaching-agent-service."
+  value       = google_service_account.coaching.email
+}
+
+output "coaching_service_url" {
+  description = "coaching-agent-service HTTPS endpoint."
+  value       = google_cloud_run_v2_service.coaching.uri
+}
+
 output "firestore_database" {
   description = "Firestore database name."
   value       = google_firestore_database.default.name
