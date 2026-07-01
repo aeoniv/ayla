@@ -1,0 +1,13 @@
+from fastapi import FastAPI
+
+from .routes import authoring, score
+
+app = FastAPI(title="Ayla pose-scoring-service", version="0.1.0")
+
+app.include_router(authoring.router)
+app.include_router(score.router)
+
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok", "service": "pose-scoring-service"}
