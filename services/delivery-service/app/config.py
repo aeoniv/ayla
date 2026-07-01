@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     # token here for digital goods.
     telegram_provider_token: str = ""
     owner_telegram_id: int = 0
+    # Secret set via setWebhook secret_token; echoed by Telegram in the
+    # X-Telegram-Bot-Api-Secret-Token header. Verifies webhook authenticity.
+    telegram_webhook_secret: str = ""
 
     # GCP
     gcp_project_id: str = ""

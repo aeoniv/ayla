@@ -18,7 +18,7 @@ enforcement, and Stars invoice creation.
 | GET  | `/movement/{id}/variants` | carousel; un-entitled variants blurred, no URL |
 | POST | `/playback/progress` | server-authoritative 12s enforcement |
 | POST | `/payment/create-invoice` | Telegram Stars (XTR) invoice link |
-| POST | `/payment/webhook` | **NOT implemented — Phase 1 checkpoint (returns 501)** |
+| POST | `/payment/webhook` | successful_payment + Stars renewals; secret-verified, idempotent |
 | GET  | `/healthz` | liveness |
 
 ## The three rules that are never skipped
@@ -64,5 +64,16 @@ uvicorn app.main:app --reload --port 8080
 - `TELEGRAM_BOT_TOKEN` (set), `TELEGRAM_PROVIDER_TOKEN` (leave empty)
 - `OWNER_TELEGRAM_ID` (your numeric id)
 - `SESSION_SECRET` (a strong random value in prod)
-- Deploy behind Cloud Run; set the webhook URL only after the webhook endpoint
-  is implemented (next checkpoint).
+- Deploy to Cloud Run, then register the webhook:
+  `setWebhook(url=<service>/payment/webhook, secret_token=<TELEGRAM_WEBHOOK_SECRET>,
+  allowed_updates=["message"])`. Set the same `TELEGRAM_WEBHOOK_SECRET` env var so
+  the service can verify the `X-Telegram-Bot-Api-Secret-Token` header.
+
+### Entitlement grant (webhook)
+- Idempotent: the `entitlements` doc id **is** the `telegram_payment_charge_id`,
+  so redelivered updates are no-ops (`granted:false`).
+- `invoice_payload` carries `{scope, movement_id|variant_id, user_id}` (bound to
+  the buyer at invoice creation), so grants go to the right user.
+- Stars subscription renewals: `subscription_expiration_date` → stored as
+  `subscription_expires_at`; `_has_active_subscription` treats the furthest-future
+  unexpired doc as active.

@@ -1,9 +1,12 @@
+import json
+from datetime import datetime, timezone
+
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..config import get_settings
 from ..deps import SessionUser, current_user
-from ..firestore import db
+from ..firestore import db, grant_entitlement
 from ..models import InvoiceRequest, InvoiceResponse
 
 router = APIRouter(prefix="/payment", tags=["payment"])
@@ -64,8 +67,6 @@ async def create_invoice(body: InvoiceRequest, user: SessionUser = Depends(curre
     # Bind the payload to the buyer so the webhook grants to the right user.
     payload["user_id"] = user.user_id
 
-    import json
-
     req = {
         "title": title[:32],
         "description": description[:255],
@@ -85,25 +86,57 @@ async def create_invoice(body: InvoiceRequest, user: SessionUser = Depends(curre
 
 
 @router.post("/webhook")
-async def payment_webhook():
+async def payment_webhook(request: Request):
     """Telegram successful_payment + Stars subscription renewal handler.
 
-    ┌──────────────────────────────────────────────────────────────────┐
-    │  STOP — checkpoint per the build order.                           │
-    │  Entitlement schema is confirmed (scope: movement | variant), but │
-    │  this endpoint is the designated point to get the owner's final   │
-    │  go-ahead before writing the grant/idempotency logic.             │
-    │                                                                    │
-    │  Planned behavior (NOT yet implemented):                          │
-    │   - verify update authenticity (secret_token header)              │
-    │   - read successful_payment.telegram_payment_charge_id            │
-    │   - idempotent upsert on charge id -> entitlements                 │
-    │   - parse invoice_payload -> {scope, movement_id|variant_id,      │
-    │     user_id}                                                       │
-    │   - Stars subscription renewals -> extend subscription_expires_at │
-    └──────────────────────────────────────────────────────────────────┘
+    Authenticity: verified via the X-Telegram-Bot-Api-Secret-Token header
+    (set through setWebhook's secret_token). Idempotency: entitlements are keyed
+    on telegram_payment_charge_id, so a redelivered update is a no-op.
     """
-    raise HTTPException(
-        status_code=501,
-        detail="payment webhook not implemented — awaiting owner go-ahead (Phase 1 checkpoint)",
+    s = get_settings()
+
+    # 1) Verify the update really came from Telegram.
+    if s.telegram_webhook_secret:
+        got = request.headers.get("x-telegram-bot-api-secret-token", "")
+        if got != s.telegram_webhook_secret:
+            raise HTTPException(403, "bad webhook secret")
+
+    update = await request.json()
+    msg = update.get("message") or {}
+    sp = msg.get("successful_payment")
+    if not sp:
+        # Not a payment update (e.g. pre_checkout handled elsewhere / ignored).
+        return {"ok": True, "ignored": True}
+
+    charge_id = sp.get("telegram_payment_charge_id")
+    if not charge_id:
+        raise HTTPException(400, "missing telegram_payment_charge_id")
+
+    # 2) Recover what was purchased from the invoice payload we set earlier.
+    try:
+        payload = json.loads(sp.get("invoice_payload", "{}"))
+    except json.JSONDecodeError:
+        raise HTTPException(400, "unparseable invoice_payload")
+
+    scope = payload.get("scope")
+    user_id = payload.get("user_id")
+    if not user_id or scope not in ("movement", "variant", "subscription"):
+        raise HTTPException(400, "invalid invoice_payload")
+
+    # 3) Stars subscriptions: convert expiry (unix seconds) if present.
+    expires_at = None
+    exp = sp.get("subscription_expiration_date")
+    if exp:
+        expires_at = datetime.fromtimestamp(int(exp), tz=timezone.utc)
+
+    # 4) Idempotent grant keyed on the charge id.
+    created = grant_entitlement(
+        charge_id=charge_id,
+        user_id=user_id,
+        scope=scope,
+        movement_id=payload.get("movement_id") if scope == "movement" else None,
+        variant_id=payload.get("variant_id") if scope == "variant" else None,
+        subscription_tier=payload.get("subscription_tier") if scope == "subscription" else None,
+        subscription_expires_at=expires_at,
     )
+    return {"ok": True, "granted": created, "charge_id": charge_id}

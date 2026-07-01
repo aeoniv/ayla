@@ -79,6 +79,48 @@ def has_variant_entitlement(user_id: str, variant_id: str) -> bool:
     return _has_active_subscription(user_id)
 
 
+def grant_entitlement(
+    charge_id: str,
+    user_id: str,
+    scope: str,
+    *,
+    movement_id: str | None = None,
+    variant_id: str | None = None,
+    subscription_tier: str | None = None,
+    subscription_expires_at=None,
+) -> bool:
+    """Idempotently grant an entitlement, keyed on telegram_payment_charge_id.
+
+    The entitlements doc id IS the charge id, so a redelivered webhook is a
+    no-op. Returns True if a new grant was written, False if it already existed
+    (renewals update the existing subscription doc's expiry).
+    """
+    ref = db().collection("entitlements").document(charge_id)
+    data = {
+        "user_id": user_id,
+        "scope": scope,
+        "movement_id": movement_id,
+        "variant_id": variant_id,
+        "subscription_tier": subscription_tier,
+        "subscription_expires_at": subscription_expires_at,
+        "telegram_payment_charge_id": charge_id,
+        "granted_at": firestore.SERVER_TIMESTAMP,
+    }
+
+    @firestore.transactional
+    def _txn(txn) -> bool:
+        snap = ref.get(transaction=txn)
+        if snap.exists:
+            # Subscription renewal for the same charge id: extend expiry only.
+            if scope == "subscription" and subscription_expires_at is not None:
+                txn.update(ref, {"subscription_expires_at": subscription_expires_at})
+            return False
+        txn.set(ref, data)
+        return True
+
+    return _txn(db().transaction())
+
+
 def _has_active_subscription(user_id: str) -> bool:
     ent = db().collection("entitlements")
     q = (
