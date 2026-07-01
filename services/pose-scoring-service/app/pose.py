@@ -39,12 +39,16 @@ def extract_landmarks(video_path: str) -> dict:
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     frames: list[list[list[float]]] = []
+    timestamps: list[float] = []
 
     with mp.solutions.pose.Pose(static_image_mode=False, model_complexity=1) as pose:
+        idx = 0
         while True:
             ok, frame = cap.read()
             if not ok:
                 break
+            t = (cap.get(cv2.CAP_PROP_POS_MSEC) or (idx / fps * 1000.0)) / 1000.0
+            idx += 1
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             res = pose.process(rgb)
             if not res.pose_landmarks:
@@ -52,8 +56,25 @@ def extract_landmarks(video_path: str) -> dict:
             frames.append(
                 [[lm.x, lm.y, lm.z, lm.visibility] for lm in res.pose_landmarks.landmark]
             )
+            timestamps.append(t)
     cap.release()
-    return {"fps": fps, "frame_count": len(frames), "frames": frames}
+    return {"fps": fps, "frame_count": len(frames), "frames": frames, "timestamps": timestamps}
+
+
+def build_checkpoints(seq: dict, marked_seconds: list[float]) -> list[dict]:
+    """Pick the extracted pose nearest each admin-marked timestamp.
+
+    Returns an ordered checkpoint list [{index, timestamp_seconds, landmarks}].
+    """
+    ts = seq.get("timestamps") or []
+    frames = seq["frames"]
+    if not ts:
+        raise ValueError("sequence has no timestamps")
+    out: list[dict] = []
+    for i, t in enumerate(sorted(marked_seconds)):
+        j = min(range(len(ts)), key=lambda k: abs(ts[k] - t))
+        out.append({"index": i, "timestamp_seconds": float(t), "landmarks": frames[j]})
+    return out
 
 
 # --- scoring math (pure numpy, unit-testable without cv2/mediapipe) --------
@@ -94,6 +115,32 @@ def _prepare(frames: list, n: int) -> np.ndarray:
     arr = _to_array(frames)[:, :, :3]  # drop visibility
     norm = np.stack([_normalize_frame(arr[i]) for i in range(arr.shape[0])])
     return _resample(norm, n)
+
+
+def _dist_to_score(mean_dist: float) -> float:
+    """Map mean per-landmark distance (torso-length units) to 0-100."""
+    return round(max(0.0, min(100.0, 100.0 * (1.0 - mean_dist / 0.5))), 1)
+
+
+def compare_pose(ref_landmarks: list, att_landmarks: list, threshold: float = 75.0) -> dict:
+    """Compare a SINGLE checkpoint pose to a single student pose.
+
+    Used by the real-time guided-flow gate. Returns
+    {score, matched, worst_region, region_scores}.
+    """
+    ref = _normalize_frame(np.asarray(ref_landmarks, dtype=np.float64)[:, :3])
+    att = _normalize_frame(np.asarray(att_landmarks, dtype=np.float64)[:, :3])
+    dist = np.linalg.norm(ref - att, axis=1)  # (33,)
+
+    region_mean = {name: float(dist[idxs].mean()) for name, idxs in REGIONS.items()}
+    region_scores = {n: _dist_to_score(m) for n, m in region_mean.items()}
+    score = _dist_to_score(float(dist.mean()))
+    return {
+        "score": score,
+        "matched": score >= threshold,
+        "worst_region": max(region_mean, key=region_mean.get),
+        "region_scores": region_scores,
+    }
 
 
 def compare(reference: dict, attempt: dict, n: int = 64) -> dict:

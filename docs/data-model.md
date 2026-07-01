@@ -63,6 +63,32 @@ Because a landmark sequence per frame can be large, store it as:
 so the Firestore doc stays small. (Documented here; the blob-vs-inline choice
 is an implementation detail confirmed at Phase 2.)
 
+#### Guided flow: checkpoints (DECIDED 2026-07-01)
+Ayla is a **pose-gated guided flow** (Taichi form style): during practice the
+reference video **pauses at each checkpoint pose and resumes only when the
+student's live pose matches** within tolerance. This is authored, not a raw
+sequence:
+
+- The **owner marks checkpoint timestamps** while authoring the full video
+  (Phase 3). Phase 2 `/score/authoring` extracts the landmark pose at each
+  marked time and stores an **ordered checkpoint list** per (movement, style)
+  at `movements/{id}/references/{style_id}`:
+  - Firestore doc: `{ landmarks_path, meta: { fps, landmark_schema,
+    checkpoint_count }, checkpoints_meta: [{ index, timestamp_seconds,
+    tolerance }] }` — small, no landmark arrays (Firestore disallows nested
+    arrays).
+  - GCS blob `references/{movement_id}/{style_id}.json`: the full checkpoint
+    landmark data `{ checkpoints: [{ index, timestamp_seconds, landmarks:
+    33×4 }] }`.
+- **Real-time matching runs on-device** (client MediaPipe). The client extracts
+  the student's landmarks and calls `POST /score/checkpoint` with the current
+  checkpoint index + landmark vector; the server scores server-side and returns
+  `{ matched, score, worst_region }`. On `matched=true` the client resumes the
+  reference video to the next checkpoint's `timestamp_seconds`.
+- On form completion the client submits the per-checkpoint matched landmarks to
+  `POST /score/attempt`; the server **re-scores authoritatively** and writes one
+  `attempts` row (aggregate `score` + worst `region`).
+
 ### `movement_style_variants`
 The same movement performed by a **different avatar / clothing style**. This is
 what the horizontal carousel scrolls between.

@@ -46,13 +46,21 @@ def reference_ref(movement_id: str, style_id: str):
     )
 
 
-def save_reference(movement_id: str, style_id: str, blob_path: str, meta: dict) -> None:
+def save_reference(
+    movement_id: str, style_id: str, blob_path: str, meta: dict, checkpoints_meta: list
+) -> None:
+    """Store the reference doc (no landmark arrays — those live in the blob).
+
+    checkpoints_meta: [{index, timestamp_seconds, tolerance}] for the client to
+    drive playback; full landmark data is in the GCS blob at blob_path.
+    """
     reference_ref(movement_id, style_id).set(
         {
             "movement_id": movement_id,
             "style_id": style_id,
             "landmarks_path": blob_path,
             "meta": meta,
+            "checkpoints_meta": checkpoints_meta,
             "extracted_at": firestore.SERVER_TIMESTAMP,
         }
     )
@@ -67,6 +75,12 @@ def save_reference(movement_id: str, style_id: str, blob_path: str, meta: dict) 
 def get_reference_path(movement_id: str, style_id: str) -> str | None:
     snap = reference_ref(movement_id, style_id).get()
     return snap.to_dict().get("landmarks_path") if snap.exists else None
+
+
+def get_checkpoints_meta(movement_id: str, style_id: str) -> list | None:
+    """Client-facing checkpoint metadata (index, timestamp, tolerance). No poses."""
+    snap = reference_ref(movement_id, style_id).get()
+    return snap.to_dict().get("checkpoints_meta") if snap.exists else None
 
 
 def write_attempt(user_id: str, movement_id: str, style_id: str, score: float, region: str) -> str:
