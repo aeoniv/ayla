@@ -1,0 +1,46 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body, html, #root { margin: 0; height: 100%; background: #000; color: #fff;
+  font-family: system-ui, -apple-system, sans-serif; }
+
+.center { height: 100%; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; text-align: center; gap: 12px; padding: 24px; }
+
+/* Vertical Reels-style feed */
+.feed { height: 100vh; overflow-y: scroll; scroll-snap-type: y mandatory; }
+.feed-slide { height: 100vh; scroll-snap-align: start; }
+
+.card { position: relative; height: 100%; display: flex; flex-direction: column; }
+.video-wrap { position: relative; flex: 1; background: #111; }
+.video { width: 100%; height: 100%; object-fit: cover; }
+.video.blurred { filter: blur(24px) brightness(0.6); }
+.video.placeholder { background: linear-gradient(135deg, #222, #333); }
+
+.overlay { position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px; background: rgba(0,0,0,.55); }
+.overlay button, .practice { background: #f2c14e; color: #111; border: 0;
+  padding: 12px 18px; border-radius: 999px; font-weight: 700; }
+
+.card-meta { padding: 14px 16px 26px; display: flex; flex-direction: column; gap: 10px; }
+.card-meta h2 { margin: 0; font-size: 20px; }
+.carousel-nav { display: flex; align-items: center; gap: 16px; }
+.carousel-nav button { background: #222; color: #fff; border: 0; width: 40px; height: 40px;
+  border-radius: 50%; font-size: 20px; }
+.carousel-nav button:disabled { opacity: .3; }
+
+/* Practice */
+.practice { position: relative; height: 100vh; background: #000; }
+.ref-video { width: 100%; height: 100%; object-fit: contain; }
+.cam-video { position: absolute; bottom: 16px; right: 16px; width: 120px; height: 160px;
+  object-fit: cover; border-radius: 12px; border: 2px solid #f2c14e; transform: scaleX(-1); }
+.exit { position: absolute; top: 14px; left: 14px; z-index: 5; background: rgba(0,0,0,.5);
+  color: #fff; border: 0; width: 40px; height: 40px; border-radius: 50%; font-size: 18px; }
+.hud { position: absolute; top: 14px; left: 0; right: 0; text-align: center; z-index: 4;
+  display: flex; flex-direction: column; gap: 6px; }
+.hud .gate { color: #f2c14e; font-weight: 700; }
+.hud .hint { opacity: .85; }
+.coach { position: absolute; inset: 0; background: rgba(0,0,0,.85); display: flex;
+  flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 28px; }
+.coach .next { opacity: .8; }
+.coach button { background: #f2c14e; color: #111; border: 0; padding: 12px 18px;
+  border-radius: 999px; font-weight: 700; }
