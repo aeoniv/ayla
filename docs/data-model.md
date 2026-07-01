@@ -74,7 +74,11 @@ what the horizontal carousel scrolls between.
 | `avatar_id`         | string          | → `avatars.id`                             |
 | `teaser_video_path` | string          | GCS path, ≤ 12s                            |
 | `full_video_path`   | string          | GCS path                                   |
+| `price_stars`       | number          | XTR price for **this variant** (smaller than the movement price) |
 | `created_at`        | Timestamp       |                                            |
+
+Each variant is **individually purchasable** at its own (smaller) `price_stars`.
+Buying the base movement does **not** unlock its variants — see Review #1.
 
 Note: the base `movements` row is itself the "canonical" variant; the
 carousel = base movement + all its `movement_style_variants`.
@@ -87,8 +91,9 @@ supports all three so the decision is reversible.
 |------------------------------|-----------------------|---------------------------------------------------|
 | `id`                         | string (doc id)       |                                                   |
 | `user_id`                    | string                | → `users.id`                                      |
-| `scope`                      | enum `movement` \| `subscription` | what was granted                      |
-| `movement_id`                | string \| null        | set when `scope = movement`                       |
+| `scope`                      | enum `movement` \| `variant` \| `subscription` | what was granted         |
+| `movement_id`                | string \| null        | set when `scope = movement` (unlocks main video only) |
+| `variant_id`                 | string \| null        | set when `scope = variant` (unlocks that one variant) |
 | `subscription_tier`          | string \| null        | set when `scope = subscription`                   |
 | `telegram_payment_charge_id` | string                | **unique** — dedup key for webhook idempotency    |
 | `granted_at`                 | Timestamp             |                                                   |
@@ -140,48 +145,48 @@ they are not regenerated on every feed request.
 
 ## ⚠️ FLAGGED FOR REVIEW #1 — Entitlement granularity
 
-The prerequisite asks what a payment unlocks. The three options change
-entitlement granularity and pricing surface:
+**DECIDED (owner, 2026-07-01): per-item purchase.**
 
-| option | what a payment unlocks | pros | cons |
-|--------|------------------------|------|------|
-| **A. Single full video** | one `movement` in **one** style only | finest granularity, cheapest price point | user pays again to see the same movement in another avatar/style — likely feels punitive since variants are the *same* movement |
-| **B. One movement, all its variants** *(recommended)* | one `movement_id` across **all** its `movement_style_variants` | matches the mental model — "I bought this movement", horizontal carousel stays unlocked, aligns with the shared 12s `watch_progress` cap keyed on `movement_id` | more content per purchase; needs `price_stars` tuned per movement |
-| **C. Recurring Stars subscription** | everything, while `subscription_expires_at` is in the future | best recurring revenue, simplest UX ("unlock all") | requires Stars subscription webhook renewal handling; all-or-nothing hides per-movement pricing |
+- Buying a **movement** unlocks its **main video only** (`price_stars` on
+  `movements`).
+- Each **variant** is bought **separately**, at its own **smaller**
+  `price_stars` on `movement_style_variants`.
+- Entitlements therefore have `scope = movement` (movement_id) **or**
+  `scope = variant` (variant_id). Buying the movement does **not** unlock
+  variants; buying a variant does **not** unlock the movement.
+- `scope = subscription` remains in the schema for a possible future
+  "unlock all" tier, but is **not** used now.
 
-**Recommendation: B**, with the schema above also supporting C so you can add a
-subscription tier later without migration. Reasons: (1) B is consistent with
-the watch_progress cap being keyed on `movement_id`, so unlocking a movement
-naturally unlocks every avatar/style of it; (2) it avoids the "I paid but the
-next carousel card is locked" confusion of A.
-
-**Please confirm A, B, C, or B+C before Phase 1's webhook is implemented.**
+Phase 1's webhook grants one entitlement row per purchased item, idempotent on
+`telegram_payment_charge_id`.
 
 ## ⚠️ FLAGGED FOR REVIEW #2 — watch_progress / 12s enforcement
 
-Proposed enforcement (server-authoritative, client cannot bypass):
+**DECIDED (owner, 2026-07-01): 12s free preview on the MAIN video only;
+variants stay locked/blurred until purchased.**
 
-1. On playback, the frontend periodically POSTs elapsed seconds to
-   `POST /playback/progress` with `{ movement_id, variant_id, seconds }`.
-2. The server loads `watch_progress/${user_id}_${movement_id}`, and updates
-   `seconds_watched = max(existing, min(reported, existing + delta))` — it
-   **never trusts a lower number** and clamps implausible jumps, so cumulative
-   seconds are monotonic per movement.
-3. The cap is keyed on `movement_id`, **not** `variant_id`. Switching styles
-   horizontally continues the same counter — no fresh 12 seconds.
-4. When `seconds_watched >= 12` **and** the user has no entitlement covering
-   that movement, the endpoint responds `locked: true`. The player stops
-   playback at 12s (on any variant, any axis) and shows the unlock prompt,
-   which calls `POST /payment/create-invoice`.
-5. Entitled users are never capped: if an entitlement covers the movement, the
-   server returns `locked: false` regardless of `seconds_watched`.
+Server-authoritative, client cannot bypass:
 
-This enforcement is **server-side and authoritative** — the client stopping at
-12s is a UX nicety, but the `locked` decision and the cumulative counter live
-on the server. The same check gates scoring in Phase 2 (entitlement required,
-teaser access alone is insufficient).
+1. **Main video (base movement):** free preview up to 12s. Frontend
+   periodically POSTs `POST /playback/progress`
+   `{ movement_id, variant_id: null, seconds }`. Server loads
+   `watch_progress/${user_id}_${movement_id}` and sets
+   `seconds_watched = max(existing, min(reported, existing + delta))` —
+   never trusts a lower number, clamps jumps, so the counter is monotonic.
+2. When `seconds_watched >= 12` and the user has no `scope=movement`
+   entitlement for it, the endpoint responds `locked: true`; player stops at
+   12s and shows the unlock prompt → `POST /payment/create-invoice`.
+3. **Variants:** **no free preview at all.** A variant plays only if the user
+   has a `scope=variant` entitlement for that `variant_id`. Otherwise the
+   carousel shows it **blurred** (poster/first frame blurred, no playback) with
+   a buy prompt. `/playback/progress` for a variant with no entitlement returns
+   `locked: true` immediately (0s allowed).
+4. Entitled users are never capped for the item they own.
+5. The same entitlement check gates scoring in Phase 2 — a valid entitlement
+   for that movement/variant is required; preview access alone is insufficient.
 
-**Please confirm this enforcement design before Phase 1.**
+The `locked` decision and cumulative counter live on the server; the client
+stop/blur is only UX.
 
 ---
 
