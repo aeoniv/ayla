@@ -167,6 +167,17 @@ async def create_variant(
     return {"ok": True, "variant_id": vid}
 
 
+@router.post("/style")
+async def create_style(
+    name: str = Form(...),
+    owner: SessionUser = Depends(require_owner),
+):
+    """Register a lineage/discipline style (e.g. Taichi, Shaolin, Meihua)."""
+    ref = db().collection("styles").document()
+    ref.set({"name": name})
+    return {"ok": True, "style_id": ref.id}
+
+
 @router.post("/avatar")
 async def create_avatar(
     name: str = Form(...),
