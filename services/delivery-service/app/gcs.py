@@ -18,6 +18,22 @@ def _client() -> storage.Client:
     return storage.Client(project=get_settings().gcp_project_id or None)
 
 
+def upload_file(path: str, local_path: str, content_type: str = "video/mp4") -> None:
+    """Upload a local file to a bucket-relative object path (Phase 3 authoring)."""
+    s = get_settings()
+    _client().bucket(s.gcs_bucket).blob(path).upload_from_filename(
+        local_path, content_type=content_type
+    )
+
+
+def delete(path: str) -> None:
+    """Best-effort delete used to roll back a failed authoring upload."""
+    try:
+        _client().bucket(get_settings().gcs_bucket).blob(path).delete()
+    except Exception:
+        pass
+
+
 def sign(path: str | None) -> str | None:
     """Return a time-limited signed GET URL for a bucket-relative object path."""
     if not path:

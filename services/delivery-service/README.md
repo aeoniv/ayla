@@ -19,7 +19,29 @@ enforcement, and Stars invoice creation.
 | POST | `/playback/progress` | server-authoritative 12s enforcement |
 | POST | `/payment/create-invoice` | Telegram Stars (XTR) invoice link |
 | POST | `/payment/webhook` | successful_payment + Stars renewals; secret-verified, idempotent |
+| POST | `/admin/movement` | **owner-only**: upload teaser(≤12s)+full, author checkpoints, publish |
+| POST | `/admin/movement-variant` | **owner-only**: upload variant pair, link via `movement_style_variants` |
+| POST | `/admin/avatar` | **owner-only**: register an avatar under a style |
 | GET  | `/healthz` | liveness |
+
+## Phase 3 — owner authoring flow
+Owner-only (gated by `require_owner`: session role `owner` AND telegram id ==
+`OWNER_TELEGRAM_ID`). `/admin/movement`:
+1. validates `style_id`, parses `checkpoint_seconds` (JSON array);
+2. saves uploads to temp, **rejects the teaser if it exceeds
+   `MAX_TEASER_SECONDS` (12s)** via ffprobe — before any GCS write;
+3. uploads teaser+full to `movements/{id}/…`, creates the movement doc;
+4. calls pose-scoring `/score/authoring` (with `INTERNAL_API_KEY`) to extract
+   checkpoint reference poses; **rolls back the doc + blobs if authoring fails**.
+
+Needs `POSE_SCORING_URL` + `INTERNAL_API_KEY`, and the runtime SA now also needs
+**object create/delete** on the one bucket (authoring writes videos), in
+addition to the read/sign scope from Phase 1.
+
+> Variant scoring: `/admin/movement-variant` uploads/links only (per spec) — it
+> does **not** author its own checkpoint references. Practice scores against the
+> movement's home-style reference. Add per-variant authoring later if variants
+> need independent scoring.
 
 ## The three rules that are never skipped
 1. **12s free preview on the MAIN video only.** Cumulative seconds are keyed on

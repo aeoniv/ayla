@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     # Free preview cap on the MAIN video, in seconds (variants get 0).
     free_preview_seconds: int = 12
 
+    # Max teaser length, seconds. Teasers longer than this are rejected.
+    max_teaser_seconds: float = 12.0
+
+    # Phase 3 authoring -> Phase 2 pose-scoring-service (internal call).
+    pose_scoring_url: str = ""      # e.g. https://pose-scoring-...run.app
+    internal_api_key: str = ""      # shared secret for /score/authoring
+
 
 @lru_cache
 def get_settings() -> Settings:

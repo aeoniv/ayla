@@ -140,6 +140,10 @@ def _has_active_subscription(user_id: str) -> bool:
 
 # --- watch progress ------------------------------------------------------
 
+def doc_exists(collection: str, doc_id: str) -> bool:
+    return db().collection(collection).document(doc_id).get().exists
+
+
 def get_watched_seconds(user_id: str, movement_id: str) -> float:
     ref = db().collection("watch_progress").document(f"{user_id}_{movement_id}")
     snap = ref.get()
