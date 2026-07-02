@@ -95,4 +95,11 @@ def write_attempt(user_id: str, movement_id: str, style_id: str, score: float, r
             "timestamp": firestore.SERVER_TIMESTAMP,
         }
     )
+    # Engagement signal for feed ranking (advisory; never fail the attempt on it).
+    try:
+        db().collection("movements").document(movement_id).update(
+            {"attempt_count": firestore.Increment(1)}
+        )
+    except Exception:
+        pass
     return ref.id

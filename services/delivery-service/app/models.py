@@ -16,10 +16,14 @@ class AuthResponse(BaseModel):
 class FeedItem(BaseModel):
     movement_id: str
     name: str
+    description: str | None
     style_id: str
     price_stars: int
     teaser_url: str | None
     created_at: str | None
+    like_count: int
+    liked: bool
+    entitled: bool
 
 
 class VariantItem(BaseModel):

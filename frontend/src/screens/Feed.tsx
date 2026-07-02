@@ -1,15 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { FeedItem, getFeed } from "../api/client";
 import MovementCard from "../components/MovementCard";
+import Wallet from "../components/Wallet";
 
 interface Props {
+  isOwner: boolean;
+  onOpenAdmin: () => void;
   onPractice: (movementId: string, styleId: string) => void;
 }
 
-export default function Feed({ onPractice }: Props) {
+export default function Feed({ isOwner, onOpenAdmin, onPractice }: Props) {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [walletOpen, setWalletOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,16 +44,22 @@ export default function Feed({ onPractice }: Props) {
   if (!items.length) return <div className="center">No movements yet.</div>;
 
   return (
-    <div className="feed" ref={containerRef}>
-      {items.map((it) => (
-        <div key={it.movement_id} data-mid={it.movement_id} className="feed-slide">
-          <MovementCard
-            item={it}
-            active={activeId === it.movement_id}
-            onPractice={onPractice}
-          />
-        </div>
-      ))}
-    </div>
+    <>
+      <button className="wallet-btn" onClick={() => (isOwner ? onOpenAdmin() : setWalletOpen(true))}>
+        {isOwner ? "⚙︎ Admin" : "👛"}
+      </button>
+      <div className="feed" ref={containerRef}>
+        {items.map((it) => (
+          <div key={it.movement_id} data-mid={it.movement_id} className="feed-slide">
+            <MovementCard
+              item={it}
+              active={activeId === it.movement_id}
+              onPractice={onPractice}
+            />
+          </div>
+        ))}
+      </div>
+      {walletOpen && <Wallet isOwner={isOwner} onClose={() => setWalletOpen(false)} />}
+    </>
   );
 }

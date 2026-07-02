@@ -40,8 +40,7 @@ def _load_priced_item(body: InvoiceRequest) -> tuple[str, str, int, dict]:
             "Style variant",
             "Unlock this avatar/style variant",
             int(d.get("price_stars", 0)),
-            {"scope": "variant", "variant_id": body.variant_id,
-             "movement_id": d.get("movement_id")},
+            {"scope": "variant", "variant_id": body.variant_id},
         )
     if body.subscription_tier:
         # Reserved for a future "unlock all" tier; not sold yet.
@@ -70,7 +69,7 @@ async def create_invoice(body: InvoiceRequest, user: SessionUser = Depends(curre
     req = {
         "title": title[:32],
         "description": description[:255],
-        "payload": json.dumps(payload),
+        "payload": json.dumps(payload, separators=(",", ":")),  # ≤128 bytes (Telegram cap)
         "provider_token": "",          # MUST be empty for XTR / Stars
         "currency": "XTR",
         "prices": [{"label": title[:32], "amount": price_stars}],
@@ -102,10 +101,23 @@ async def payment_webhook(request: Request):
             raise HTTPException(403, "bad webhook secret")
 
     update = await request.json()
+
+    # 1b) pre_checkout_query: Telegram REQUIRES an answer within 10s or the
+    # payment is cancelled and refunded. Approve it (the invoice was already
+    # priced/validated at create-invoice time).
+    pcq = update.get("pre_checkout_query")
+    if pcq:
+        ok = True
+        if s.telegram_bot_token:
+            url = f"{TELEGRAM_API}/bot{s.telegram_bot_token}/answerPreCheckoutQuery"
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(url, json={"pre_checkout_query_id": pcq["id"], "ok": ok})
+        return {"ok": True, "pre_checkout": True}
+
     msg = update.get("message") or {}
     sp = msg.get("successful_payment")
     if not sp:
-        # Not a payment update (e.g. pre_checkout handled elsewhere / ignored).
+        # Not a payment update (e.g. a plain message we don't act on).
         return {"ok": True, "ignored": True}
 
     charge_id = sp.get("telegram_payment_charge_id")

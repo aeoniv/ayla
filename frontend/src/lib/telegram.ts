@@ -15,6 +15,16 @@ export function getInitData(): string {
   return tg()?.initData ?? "";
 }
 
+/** Native Telegram "share to…" sheet for a movement. */
+export function shareMovement(name: string): void {
+  const w = tg();
+  const botUrl = "https://t.me/Ayla_Bot";
+  const text = `Learn "${name}" on Ayla — AI-corrected movement coaching`;
+  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(botUrl)}&text=${encodeURIComponent(text)}`;
+  if (w?.openTelegramLink) w.openTelegramLink(shareUrl);
+  else window.open(shareUrl, "_blank");
+}
+
 /** Open a Telegram Stars invoice; resolves with the final status string. */
 export function openInvoice(url: string): Promise<string> {
   return new Promise((resolve) => {

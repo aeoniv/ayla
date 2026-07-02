@@ -5,7 +5,10 @@ cv2 and mediapipe are heavy native deps; they're lazy-imported inside
 math) import without them. The Docker image installs both.
 
 Landmark schema: MediaPipe Pose, 33 landmarks, each (x, y, z, visibility),
-image-normalized coordinates in [0, 1].
+image-normalized coordinates in [0, 1]. Both the stored reference and the live
+student pose come from the SAME MediaPipe model, so the 33-landmark ordering is
+shared — `_as_landmarks` enforces that shape before any geometry runs, because a
+mismatched ordering makes every distance meaningless.
 """
 from __future__ import annotations
 
@@ -13,6 +16,11 @@ import numpy as np
 
 LANDMARK_SCHEMA = "mediapipe_pose_33"
 NUM_LANDMARKS = 33
+
+# We compare in the image plane (x, y) only. MediaPipe's z is a rough,
+# single-camera depth estimate — noisy, and it IS the camera-distance axis, so
+# including it re-introduces the very false negatives normalization removes.
+FEATURE_DIMS = 2
 
 # Landmark index groups for per-region deviation reporting.
 REGIONS = {
@@ -26,6 +34,27 @@ REGIONS = {
 
 _L_SHOULDER, _R_SHOULDER, _L_HIP, _R_HIP = 11, 12, 23, 24
 
+# Named difficulty gates (0-100 score thresholds). The client also sends a
+# continuous slider value which, when present, OVERRIDES these — but the named
+# levels are the canonical anchors and the server-side fallback.
+DIFFICULTY: dict[str, float] = {
+    "easy": 55.0,
+    "medium": 70.0,
+    "hard": 85.0,
+}
+DEFAULT_DIFFICULTY = "medium"
+
+# Fraction of its score a pose keeps when it fails the difficulty gate. Missing
+# the gate has to cost real points, otherwise "almost right on hard" would
+# aggregate like a clean hit.
+FAIL_PENALTY = 0.35
+
+# Threshold override is clamped to this sane band regardless of what the client
+# sends.
+_MIN_THRESHOLD, _MAX_THRESHOLD = 30.0, 95.0
+
+
+# --- extraction (needs cv2 + mediapipe) ------------------------------------
 
 def extract_landmarks(video_path: str) -> dict:
     """Run MediaPipe Pose over a video file. Returns {fps, frame_count, frames}.
@@ -73,32 +102,167 @@ def build_checkpoints(seq: dict, marked_seconds: list[float]) -> list[dict]:
     out: list[dict] = []
     for i, t in enumerate(sorted(marked_seconds)):
         j = min(range(len(ts)), key=lambda k: abs(ts[k] - t))
-        out.append({"index": i, "timestamp_seconds": float(t), "landmarks": frames[j]})
+        # Store the ACTUAL timestamp of the frame the landmarks came from, not
+        # the owner's marked time. The client pauses the avatar video at this
+        # timestamp, so the displayed frame and the ghost skeleton must be the
+        # same frame — otherwise the pose drifts (worst on fast parts like hands)
+        # because MediaPipe skips undetected frames and ts[j] != t.
+        out.append(
+            {"index": i, "timestamp_seconds": float(ts[j]),
+             "marked_seconds": float(t), "landmarks": frames[j]}
+        )
     return out
 
 
-# --- scoring math (pure numpy, unit-testable without cv2/mediapipe) --------
+# --- coordinate mapping guard (concern #3) ---------------------------------
 
-def _to_array(frames: list) -> np.ndarray:
-    """(F, 33, 4) float array; use only x,y,z for geometry."""
-    return np.asarray(frames, dtype=np.float64)
+def _as_landmarks(frame, name: str = "pose") -> np.ndarray:
+    """Coerce one pose to a validated (33, >=3) float array.
 
-
-def _normalize_frame(xyz: np.ndarray) -> np.ndarray:
-    """Translate to hip-center origin and scale by torso length.
-
-    Makes the comparison invariant to where the person is in-frame and their
-    apparent size. xyz: (33, 3).
+    Both sides are MediaPipe-33, so the ordering already lines up — but a
+    truncated/ragged/mis-shaped payload would silently pair the wrong joints and
+    produce a garbage score. Reject it loudly instead.
     """
-    hip_center = (xyz[_L_HIP] + xyz[_R_HIP]) / 2.0
-    shoulder_center = (xyz[_L_SHOULDER] + xyz[_R_SHOULDER]) / 2.0
-    torso = np.linalg.norm(shoulder_center - hip_center)
+    arr = np.asarray(frame, dtype=np.float64)
+    if arr.ndim != 2 or arr.shape[0] != NUM_LANDMARKS or arr.shape[1] < 3:
+        raise ValueError(
+            f"{name} must be {NUM_LANDMARKS} MediaPipe landmarks of >=3 values, "
+            f"got shape {arr.shape}"
+        )
+    return arr
+
+
+def _as_sequence(frames) -> np.ndarray:
+    """Coerce a list of poses to a validated (F, 33, >=3) float array."""
+    arr = np.asarray(frames, dtype=np.float64)
+    if arr.ndim != 3 or arr.shape[1] != NUM_LANDMARKS or arr.shape[2] < 3:
+        raise ValueError(
+            f"sequence must be Fx{NUM_LANDMARKS}x>=3 landmarks, got shape {arr.shape}"
+        )
+    return arr
+
+
+# --- normalization (concern #1) --------------------------------------------
+
+def _norm_points(arr: np.ndarray) -> np.ndarray:
+    """Translate a pose to hip-center origin and scale to a canonical body size.
+
+    Returns (33, 2) image-plane points. Scale is the torso length (shoulder
+    center -> hip center); if the torso collapses (side-on frame / bad
+    detection) it falls back to shoulder width, then 1.0. After this the same
+    pose performed near or far from the camera maps to the same coordinates, so
+    comparison measures the SHAPE of the pose, not the dancer's distance.
+    """
+    xy = arr[:, :FEATURE_DIMS]
+    hip = (xy[_L_HIP] + xy[_R_HIP]) / 2.0
+    shoulder = (xy[_L_SHOULDER] + xy[_R_SHOULDER]) / 2.0
+    torso = float(np.linalg.norm(shoulder - hip))
+    if torso <= 1e-6:
+        torso = float(np.linalg.norm(xy[_L_SHOULDER] - xy[_R_SHOULDER]))
     scale = torso if torso > 1e-6 else 1.0
-    return (xyz - hip_center) / scale
+    return (xy - hip) / scale
+
+
+def _visibility(arr: np.ndarray) -> np.ndarray:
+    """Per-landmark visibility in [0, 1]; all-ones when absent."""
+    if arr.shape[1] >= 4:
+        return np.clip(arr[:, 3], 0.0, 1.0)
+    return np.ones(arr.shape[0])
+
+
+def _weighted_mean(dist: np.ndarray, weights: np.ndarray) -> float:
+    """Visibility-weighted mean distance.
+
+    Joints the camera couldn't see contribute little, so occlusion / a limb
+    leaving frame doesn't manufacture a false penalty. Falls back to a plain
+    mean when nothing is visible.
+    """
+    w = np.clip(weights, 0.0, 1.0)
+    total = float(w.sum())
+    if total < 1e-6:
+        return float(dist.mean())
+    return float((dist * w).sum() / total)
+
+
+def _dist_to_score(mean_dist: float) -> float:
+    """Map mean per-landmark distance (torso-length units) to 0-100."""
+    return round(max(0.0, min(100.0, 100.0 * (1.0 - mean_dist / 0.5))), 1)
+
+
+# --- difficulty (concern #2) -----------------------------------------------
+
+def resolve_threshold(
+    difficulty: str | None = None,
+    override: float | None = None,
+    authored: float | None = None,
+) -> float:
+    """Resolve the effective 0-100 gate.
+
+    Priority: explicit numeric `override` (client slider, clamped) > named
+    `difficulty` level > authored per-checkpoint tolerance > medium default.
+    """
+    if override is not None:
+        return max(_MIN_THRESHOLD, min(_MAX_THRESHOLD, float(override)))
+    if difficulty is not None:
+        return DIFFICULTY.get(str(difficulty).lower(), DIFFICULTY[DEFAULT_DIFFICULTY])
+    if authored is not None:
+        return float(authored)
+    return DIFFICULTY[DEFAULT_DIFFICULTY]
+
+
+# --- scoring math (pure numpy, unit-testable without cv2/mediapipe) ---------
+
+def compare_pose(ref_landmarks: list, att_landmarks: list, threshold: float = 75.0) -> dict:
+    """Compare a SINGLE checkpoint pose to a single student pose.
+
+    Used by the real-time guided-flow gate. Both poses are validated, normalized
+    (translation + scale invariant), and compared in 2D with visibility weighting.
+    Returns {score, matched, effective_score, worst_region, region_scores}.
+    """
+    ref = _norm_points(_as_landmarks(ref_landmarks, "reference"))
+    att_arr = _as_landmarks(att_landmarks, "attempt")
+    att = _norm_points(att_arr)
+    vis = _visibility(att_arr)
+
+    dist = np.linalg.norm(ref - att, axis=1)  # (33,) 2D per-landmark distance
+
+    region_mean = {name: _weighted_mean(dist[idxs], vis[idxs]) for name, idxs in REGIONS.items()}
+    region_scores = {n: _dist_to_score(m) for n, m in region_mean.items()}
+    score = _dist_to_score(_weighted_mean(dist, vis))
+    matched = score >= threshold
+    return {
+        "score": score,
+        "matched": matched,
+        # Sub-threshold poses are heavily penalized so they can't aggregate like
+        # a real hit; a matched pose keeps its full score.
+        "effective_score": score if matched else round(score * FAIL_PENALTY, 1),
+        "worst_region": max(region_mean, key=region_mean.get),
+        "region_scores": region_scores,
+    }
+
+
+def validate_pose(
+    ref_landmarks: list,
+    att_landmarks: list,
+    difficulty: str | None = DEFAULT_DIFFICULTY,
+    override: float | None = None,
+    authored: float | None = None,
+) -> dict:
+    """Score a live pose against a target and ENFORCE the difficulty gate.
+
+    The server-side mirror of the client's validatePose: normalize both poses,
+    compare, resolve the threshold (override > difficulty > authored > default),
+    and return the match decision plus a penalized effective score. This is the
+    single place difficulty is applied, so the gate is never silently skipped.
+    """
+    threshold = resolve_threshold(difficulty, override, authored)
+    result = compare_pose(ref_landmarks, att_landmarks, threshold=threshold)
+    result["threshold"] = threshold
+    return result
 
 
 def _resample(seq: np.ndarray, n: int) -> np.ndarray:
-    """Linearly resample a (F, 33, 3) sequence to (n, 33, 3) over normalized time."""
+    """Linearly resample a (F, 33, D) sequence to (n, 33, D) over normalized time."""
     f = seq.shape[0]
     if f == n:
         return seq
@@ -112,35 +276,9 @@ def _resample(seq: np.ndarray, n: int) -> np.ndarray:
 
 
 def _prepare(frames: list, n: int) -> np.ndarray:
-    arr = _to_array(frames)[:, :, :3]  # drop visibility
-    norm = np.stack([_normalize_frame(arr[i]) for i in range(arr.shape[0])])
+    arr = _as_sequence(frames)
+    norm = np.stack([_norm_points(arr[i]) for i in range(arr.shape[0])])  # (F, 33, 2)
     return _resample(norm, n)
-
-
-def _dist_to_score(mean_dist: float) -> float:
-    """Map mean per-landmark distance (torso-length units) to 0-100."""
-    return round(max(0.0, min(100.0, 100.0 * (1.0 - mean_dist / 0.5))), 1)
-
-
-def compare_pose(ref_landmarks: list, att_landmarks: list, threshold: float = 75.0) -> dict:
-    """Compare a SINGLE checkpoint pose to a single student pose.
-
-    Used by the real-time guided-flow gate. Returns
-    {score, matched, worst_region, region_scores}.
-    """
-    ref = _normalize_frame(np.asarray(ref_landmarks, dtype=np.float64)[:, :3])
-    att = _normalize_frame(np.asarray(att_landmarks, dtype=np.float64)[:, :3])
-    dist = np.linalg.norm(ref - att, axis=1)  # (33,)
-
-    region_mean = {name: float(dist[idxs].mean()) for name, idxs in REGIONS.items()}
-    region_scores = {n: _dist_to_score(m) for n, m in region_mean.items()}
-    score = _dist_to_score(float(dist.mean()))
-    return {
-        "score": score,
-        "matched": score >= threshold,
-        "worst_region": max(region_mean, key=region_mean.get),
-        "region_scores": region_scores,
-    }
 
 
 def compare(reference: dict, attempt: dict, n: int = 64) -> dict:
@@ -151,7 +289,7 @@ def compare(reference: dict, attempt: dict, n: int = 64) -> dict:
     if not reference.get("frames") or not attempt.get("frames"):
         raise ValueError("empty landmark sequence")
 
-    ref = _prepare(reference["frames"], n)      # (n, 33, 3)
+    ref = _prepare(reference["frames"], n)      # (n, 33, 2)
     att = _prepare(attempt["frames"], n)
 
     # per-landmark, per-frame euclidean distance -> (n, 33)
@@ -162,11 +300,9 @@ def compare(reference: dict, attempt: dict, n: int = 64) -> dict:
     for name, idxs in REGIONS.items():
         md = float(dist[:, idxs].mean())
         region_mean_dist[name] = md
-        # map mean distance (in torso-length units) to 0-100; ~0.5 torso => ~0
-        region_scores[name] = round(max(0.0, 100.0 * (1.0 - md / 0.5)), 1)
+        region_scores[name] = _dist_to_score(md)
 
     worst_region = max(region_mean_dist, key=region_mean_dist.get)
-    overall = float(dist.mean())
-    score = round(max(0.0, min(100.0, 100.0 * (1.0 - overall / 0.5))), 1)
+    score = _dist_to_score(float(dist.mean()))
 
     return {"score": score, "worst_region": worst_region, "region_scores": region_scores}

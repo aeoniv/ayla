@@ -65,6 +65,23 @@ def has_movement_entitlement(user_id: str, movement_id: str) -> bool:
     return _has_active_subscription(user_id)
 
 
+def list_user_entitlements(user_id: str) -> list[dict]:
+    """All non-subscription purchases for a user, newest first."""
+    ent = db().collection("entitlements")
+    out: list[dict] = []
+    for d in ent.where("user_id", "==", user_id).stream():
+        e = d.to_dict()
+        granted = e.get("granted_at")
+        out.append({
+            "scope": e.get("scope"),
+            "movement_id": e.get("movement_id"),
+            "variant_id": e.get("variant_id"),
+            "granted_at": granted.isoformat() if granted is not None else None,
+        })
+    out.sort(key=lambda x: x["granted_at"] or "", reverse=True)
+    return out
+
+
 def has_variant_entitlement(user_id: str, variant_id: str) -> bool:
     """True if the user owns this specific variant (or an active sub)."""
     ent = db().collection("entitlements")
@@ -118,7 +135,17 @@ def grant_entitlement(
         txn.set(ref, data)
         return True
 
-    return _txn(db().transaction())
+    created = _txn(db().transaction())
+    if created:
+        # Purchases are the strongest engagement signal. A variant purchase
+        # credits its parent movement.
+        mid = movement_id
+        if scope == "variant" and variant_id:
+            vsnap = db().collection("movement_style_variants").document(variant_id).get()
+            mid = vsnap.to_dict().get("movement_id") if vsnap.exists else None
+        if mid:
+            bump_engagement(mid, "purchase_count")
+    return created
 
 
 def _has_active_subscription(user_id: str) -> bool:
@@ -157,10 +184,12 @@ def record_watched_seconds(user_id: str, movement_id: str, reported: float) -> f
     """
     s = get_settings()
     ref = db().collection("watch_progress").document(f"{user_id}_{movement_id}")
+    created = {"v": False}
 
     @firestore.transactional
     def _txn(txn):
         snap = ref.get(transaction=txn)
+        created["v"] = not snap.exists
         existing = float(snap.to_dict().get("seconds_watched", 0)) if snap.exists else 0.0
         # allow at most a modest forward step per report to prevent jumping the cap
         max_step = s.free_preview_seconds + 2
@@ -177,4 +206,51 @@ def record_watched_seconds(user_id: str, movement_id: str, reported: float) -> f
         )
         return new_val
 
-    return _txn(db().transaction())
+    result = _txn(db().transaction())
+    # First view by this user counts once toward the engagement signal.
+    if created["v"]:
+        bump_engagement(movement_id, "view_count")
+    return result
+
+
+def user_likes(user_id: str, movement_id: str) -> bool:
+    return db().collection("likes").document(f"{user_id}_{movement_id}").get().exists
+
+
+def liked_set(user_id: str, movement_ids: list[str]) -> set[str]:
+    """Which of these movements the user has liked (batched-ish, best-effort)."""
+    out: set[str] = set()
+    for mid in movement_ids:
+        if db().collection("likes").document(f"{user_id}_{mid}").get().exists:
+            out.add(mid)
+    return out
+
+
+def toggle_like(user_id: str, movement_id: str) -> dict:
+    """Idempotent per-user like toggle. Keeps movement.like_count in sync."""
+    ref = db().collection("likes").document(f"{user_id}_{movement_id}")
+    if ref.get().exists:
+        ref.delete()
+        bump_engagement(movement_id, "like_count", -1)
+        liked = False
+    else:
+        ref.set({"user_id": user_id, "movement_id": movement_id,
+                 "created_at": firestore.SERVER_TIMESTAMP})
+        bump_engagement(movement_id, "like_count", 1)
+        liked = True
+    snap = db().collection("movements").document(movement_id).get()
+    return {"liked": liked, "like_count": max(0, int(snap.to_dict().get("like_count", 0)))}
+
+
+def bump_engagement(movement_id: str, field: str, n: int = 1) -> None:
+    """Increment an engagement counter on a movement doc (best-effort).
+
+    Feeds ranking (see routes/feed.py). Missing fields start at 0. Never raises
+    into the caller's happy path — engagement is advisory, not correctness.
+    """
+    try:
+        db().collection("movements").document(movement_id).update(
+            {field: firestore.Increment(n)}
+        )
+    except Exception:
+        pass
