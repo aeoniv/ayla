@@ -137,3 +137,37 @@ def test_rejects_ragged():
     ragged[5] = [0.1]  # ragged row
     with pytest.raises(ValueError):
         compare_pose(ref, ragged)
+
+
+# --- authoring sanity check + checkpoint building ---------------------------
+
+def test_sanity_check_accepts_plausible_pose():
+    res = __import__("app.pose", fromlist=["sanity_check_pose"]).sanity_check_pose(_base_pose())
+    assert res["ok"], res
+
+
+def test_sanity_check_rejects_flung_landmark():
+    from app.pose import sanity_check_pose
+    pose = _base_pose()
+    pose[15][0] += 5.0  # left wrist flung far outside the body
+    res = sanity_check_pose(pose)
+    assert not res["ok"]
+    assert any("flung" in i for i in res["issues"])
+
+
+def test_sanity_check_rejects_degenerate_and_malformed():
+    from app.pose import sanity_check_pose
+    assert not sanity_check_pose([[0.5, 0.5, 0, 1]] * 33)["ok"]      # degenerate torso
+    assert not sanity_check_pose([[0.5, 0.5, 0, 1]] * 10)["ok"]      # wrong shape
+    bad = _base_pose(); bad[0][0] = float("nan")
+    assert not sanity_check_pose(bad)["ok"]
+
+
+def test_build_checkpoints_rejects_duplicate_frames():
+    from app.pose import build_checkpoints
+    seq = {"frames": [_base_pose(), _base_pose(), _base_pose()],
+           "timestamps": [0.0, 1.0, 2.0]}
+    out = build_checkpoints(seq, [0.1, 1.1])
+    assert [c["timestamp_seconds"] for c in out] == [0.0, 1.0]
+    with pytest.raises(ValueError):
+        build_checkpoints(seq, [0.9, 1.1])  # both resolve to the 1.0s frame

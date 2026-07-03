@@ -100,8 +100,17 @@ def build_checkpoints(seq: dict, marked_seconds: list[float]) -> list[dict]:
     if not ts:
         raise ValueError("sequence has no timestamps")
     out: list[dict] = []
+    used_frames: set[int] = set()
     for i, t in enumerate(sorted(marked_seconds)):
         j = min(range(len(ts)), key=lambda k: abs(ts[k] - t))
+        # Two marks resolving to the same detected frame would silently store a
+        # duplicate checkpoint — the marks are too close together; reject loudly.
+        if j in used_frames:
+            raise ValueError(
+                f"checkpoint at {t:.2f}s resolves to the same frame as an earlier "
+                f"mark — space checkpoints further apart"
+            )
+        used_frames.add(j)
         # Store the ACTUAL timestamp of the frame the landmarks came from, not
         # the owner's marked time. The client pauses the avatar video at this
         # timestamp, so the displayed frame and the ghost skeleton must be the
@@ -190,6 +199,55 @@ def _dist_to_score(mean_dist: float) -> float:
 
 
 # --- difficulty (concern #2) -----------------------------------------------
+
+# --- authoring sanity check --------------------------------------------------
+
+# Key bones and the plausible fraction-of-torso band for each (mirror of the
+# client's validatePose in frontend/src/lib/audit.ts). Lenient low end (2D
+# foreshortening), the high end catches flung landmarks — misdetections.
+_BONES: list[tuple[int, int, float, float, str]] = [
+    (11, 13, 0.1, 1.4, "L upper arm"),
+    (12, 14, 0.1, 1.4, "R upper arm"),
+    (13, 15, 0.1, 1.4, "L forearm"),
+    (14, 16, 0.1, 1.4, "R forearm"),
+    (23, 25, 0.15, 1.6, "L thigh"),
+    (24, 26, 0.15, 1.6, "R thigh"),
+    (25, 27, 0.15, 1.6, "L shin"),
+    (26, 28, 0.15, 1.6, "R shin"),
+]
+
+
+def sanity_check_pose(landmarks: list) -> dict:
+    """Server-side validity check for an authored reference pose.
+
+    The Studio runs the same checks client-side for live feedback, but the
+    server never trusts a client-computed audit score: a reference published to
+    paying students must pass HERE. Returns {ok, issues}.
+    """
+    issues: list[str] = []
+    try:
+        arr = _as_landmarks(landmarks, "checkpoint")
+    except ValueError as e:
+        return {"ok": False, "issues": [str(e)], "warnings": []}
+    xy = arr[:, :2]
+    if not np.all(np.isfinite(xy)):
+        return {"ok": False, "issues": ["non-finite coordinates"], "warnings": []}
+    hip = (xy[_L_HIP] + xy[_R_HIP]) / 2.0
+    shoulder = (xy[_L_SHOULDER] + xy[_R_SHOULDER]) / 2.0
+    torso = float(np.linalg.norm(shoulder - hip))
+    if torso <= 1e-3:
+        return {"ok": False, "issues": ["degenerate torso"], "warnings": []}
+    warnings: list[str] = []
+    for a, b, lo, hi, label in _BONES:
+        r = float(np.linalg.norm(xy[a] - xy[b])) / torso
+        if r > hi:
+            # A bone longer than its band is a flung landmark — hard failure.
+            issues.append(f"{label} flung ({r:.2f}x torso)")
+        elif r < lo:
+            # Foreshortening can legitimately collapse a bone — warn only.
+            warnings.append(f"{label} collapsed ({r:.2f}x torso)")
+    return {"ok": not issues, "issues": issues, "warnings": warnings}
+
 
 def resolve_threshold(
     difficulty: str | None = None,

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 
 from ..deps import SessionUser, current_user
 from ..firestore import (
-    db, has_movement_entitlement, list_user_entitlements, liked_set, toggle_like,
+    db, entitled_movement_set, list_user_entitlements, liked_set, toggle_like,
 )
 from ..gcs import sign
 from ..models import FeedItem
@@ -68,7 +68,9 @@ def feed(limit: int = 20, user: SessionUser = Depends(current_user)):
     docs.sort(key=lambda doc: _score(doc.to_dict()), reverse=True)
     top = docs[:limit]
 
-    liked = liked_set(user.user_id, [doc.id for doc in top])
+    top_ids = [doc.id for doc in top]
+    liked = liked_set(user.user_id, top_ids)
+    entitled = entitled_movement_set(user.user_id, top_ids)
     items: list[FeedItem] = []
     for doc in top:
         d = doc.to_dict()
@@ -83,7 +85,7 @@ def feed(limit: int = 20, user: SessionUser = Depends(current_user)):
                 created_at=_iso(d.get("created_at")),
                 like_count=max(0, int(d.get("like_count", 0))),
                 liked=doc.id in liked,
-                entitled=has_movement_entitlement(user.user_id, doc.id),
+                entitled=doc.id in entitled,
             )
         )
     return items

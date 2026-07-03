@@ -269,3 +269,9 @@ body, html, #root { margin: 0; height: 100%; background: #000; color: #fff;
 .publish-btn { background: #1a3020; color: #7fdca0; border: 1px solid #2a6040; border-radius: 8px; padding: 8px 16px; cursor: pointer; font-size: 13px; width: 100%; }
 .publish-btn:disabled { opacity: 0.35; cursor: default; }
 .mv-actions { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+
+/* Studio: load-saved-reference + per-checkpoint tolerance */
+.author-load-ref { background: #1e2530; color: #e8eef7; border: 1px solid #2c3746; border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+.audit-tolerance { display: block; margin-top: 8px; font-size: 13px; color: #c7d3e2; }
+.audit-tolerance input[type="range"] { width: 100%; margin-top: 4px; }
+.audit-tolerance-hint { display: block; font-size: 11px; color: #7d8ca0; margin-top: 2px; }

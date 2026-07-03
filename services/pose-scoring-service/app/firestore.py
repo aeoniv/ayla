@@ -47,29 +47,47 @@ def reference_ref(movement_id: str, style_id: str):
 
 
 def save_reference(
-    movement_id: str, style_id: str, blob_path: str, meta: dict, checkpoints_meta: list
+    movement_id: str, style_id: str, blob_path: str, meta: dict, checkpoints_meta: list,
+    source: str = "auto",
 ) -> None:
     """Store the reference doc (no landmark arrays — those live in the blob).
 
     checkpoints_meta: [{index, timestamp_seconds, tolerance}] for the client to
-    drive playback; full landmark data is in the GCS blob at blob_path.
+    drive playback; full landmark data is in the GCS blob at blob_path. The
+    previous blob path is kept on the doc so a bad save can be rolled back by
+    repointing landmarks_path.
     """
-    reference_ref(movement_id, style_id).set(
+    ref = reference_ref(movement_id, style_id)
+    prev = ref.get()
+    prev_path = prev.to_dict().get("landmarks_path") if prev.exists else None
+    ref.set(
         {
             "movement_id": movement_id,
             "style_id": style_id,
             "landmarks_path": blob_path,
+            "previous_landmarks_path": prev_path,
+            "source": source,
             "meta": meta,
             "checkpoints_meta": checkpoints_meta,
             "extracted_at": firestore.SERVER_TIMESTAMP,
         }
     )
     # Mirror the path onto the movement doc for the movement's home style, to
-    # match docs/data-model.md's reference_landmarks_path field.
+    # match docs/data-model.md's reference_landmarks_path field — and flip
+    # reference_status off "pending" so the catalog/Studio know it's practicable.
     mv = db().collection("movements").document(movement_id)
     snap = mv.get()
     if snap.exists and snap.to_dict().get("style_id") == style_id:
-        mv.update({"reference_landmarks_path": blob_path, "reference_landmarks_meta": meta})
+        mv.update({
+            "reference_landmarks_path": blob_path,
+            "reference_landmarks_meta": meta,
+            "reference_status": source,
+        })
+
+
+def get_reference_doc(movement_id: str, style_id: str) -> dict | None:
+    snap = reference_ref(movement_id, style_id).get()
+    return snap.to_dict() if snap.exists else None
 
 
 def get_reference_path(movement_id: str, style_id: str) -> str | None:

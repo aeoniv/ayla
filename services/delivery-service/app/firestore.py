@@ -218,12 +218,36 @@ def user_likes(user_id: str, movement_id: str) -> bool:
 
 
 def liked_set(user_id: str, movement_ids: list[str]) -> set[str]:
-    """Which of these movements the user has liked (batched-ish, best-effort)."""
-    out: set[str] = set()
-    for mid in movement_ids:
-        if db().collection("likes").document(f"{user_id}_{mid}").get().exists:
-            out.add(mid)
-    return out
+    """Which of these movements the user has liked — one batched get_all round
+    trip instead of a sequential get per movement (this runs on every feed load)."""
+    if not movement_ids:
+        return set()
+    refs = [db().collection("likes").document(f"{user_id}_{mid}") for mid in movement_ids]
+    prefix = f"{user_id}_"
+    return {
+        snap.id[len(prefix):] for snap in db().get_all(refs) if snap.exists
+    }
+
+
+def entitled_movement_set(user_id: str, movement_ids: list[str]) -> set[str]:
+    """Which of these movements the user may fully watch/practice.
+
+    One query over the user's movement entitlements (plus the subscription
+    check) instead of a per-movement query — the feed calls this for every
+    item it returns.
+    """
+    if not movement_ids:
+        return set()
+    if _has_active_subscription(user_id):
+        return set(movement_ids)
+    owned = {
+        d.to_dict().get("movement_id")
+        for d in db().collection("entitlements")
+        .where("user_id", "==", user_id)
+        .where("scope", "==", "movement")
+        .stream()
+    }
+    return owned & set(movement_ids)
 
 
 def toggle_like(user_id: str, movement_id: str) -> dict:

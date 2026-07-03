@@ -4,10 +4,35 @@ import TimelineEditor from "../components/authoring/TimelineEditor";
 import { detect, initPose } from "../lib/pose";
 import { measureFps, seekTo, seekToFrame, stepFrame } from "../lib/video";
 import {
-  AUDIT_PASS, AuditedCheckpoint, LM, cloneLM, correctionMagnitude,
-  fromLM, toLM, validatePose,
+  AUDIT_PASS, AuditedCheckpoint, LM, TOLERANCE_DEFAULT, TOLERANCE_MAX, TOLERANCE_MIN,
+  cloneLM, correctionMagnitude, fromLM, toLM, validatePose,
 } from "../lib/audit";
-import { CatMovement, getCatalog, getFullVideo, saveAuditedReference } from "../api/client";
+import {
+  CatMovement, getCatalog, getFullVideo, getReference, saveAuditedReference,
+} from "../api/client";
+
+// Draft autosave: the Studio runs in a Telegram webview where an accidental
+// swipe/refresh is easy — losing an hour of hand-audited checkpoints is not
+// acceptable. Drafts are keyed per movement and cleared on successful save.
+const draftKey = (movementId: string) => `ayla-studio-draft:${movementId}`;
+
+function saveDraft(movementId: string, checkpoints: AuditedCheckpoint[]) {
+  try {
+    if (checkpoints.length) localStorage.setItem(draftKey(movementId), JSON.stringify(checkpoints));
+    else localStorage.removeItem(draftKey(movementId));
+  } catch { /* storage full/blocked — autosave is best-effort */ }
+}
+
+function loadDraft(movementId: string): AuditedCheckpoint[] | null {
+  try {
+    const raw = localStorage.getItem(draftKey(movementId));
+    if (!raw) return null;
+    const cps = JSON.parse(raw) as AuditedCheckpoint[];
+    if (!Array.isArray(cps) || !cps.length) return null;
+    // Older drafts predate per-checkpoint tolerance.
+    return cps.map((c) => ({ ...c, tolerance: c.tolerance ?? TOLERANCE_DEFAULT }));
+  } catch { return null; }
+}
 
 const GUIDE_STEPS = [
   "1. Pick a movement (or upload a video file) to load it.",
@@ -59,6 +84,7 @@ export default function AuthorStudio({ movementId, styleId, src, onExit }: Props
   }, [movementId, src]);
 
   // Bind a movement: its /full response carries both the style_id and the video.
+  // An unsaved draft for this movement is restored automatically.
   const bindMovement = useCallback(async (mid: string) => {
     if (!mid) return;
     setBusy("loading video…");
@@ -67,9 +93,44 @@ export default function AuthorStudio({ movementId, styleId, src, onExit }: Props
       setBoundMovement(mid);
       setBoundStyle(full.style_id);
       if (videoRef.current && full.full_url) videoRef.current.src = full.full_url;
-      setCheckpoints([]); setSelected(null); setSaved(false); setBusy("");
+      const draft = loadDraft(mid);
+      if (draft) {
+        nextId.current = Math.max(...draft.map((c) => c.index)) + 1;
+        setCheckpoints(draft);
+        setBusy("restored unsaved draft — save or clear it");
+      } else {
+        setCheckpoints([]);
+        setBusy("");
+      }
+      setSelected(null); setSaved(false);
     } catch (e) { setBusy("could not load movement: " + String(e)); }
   }, []);
+
+  // Reopen the saved (published) reference for re-editing: hydrate checkpoints
+  // from the server, audited-stamped, with their audit trail and tolerances.
+  const loadSavedReference = useCallback(async () => {
+    if (!boundMovement || !boundStyle) return;
+    setBusy("loading saved reference…");
+    try {
+      const ref = await getReference(boundMovement, boundStyle);
+      const cps: AuditedCheckpoint[] = ref.checkpoints.map((c) => {
+        const audited = toLM(c.landmarks);
+        const original = c.original_landmarks ? toLM(c.original_landmarks) : cloneLM(audited);
+        return {
+          index: nextId.current++,
+          mediaTime: c.timestamp_seconds ?? 0,
+          originalCoordinates: original,
+          auditedCoordinates: audited,
+          auditScore: c.audit_score ?? validatePose(audited).auditScore,
+          correctionMagnitude: correctionMagnitude(original, audited),
+          audited: true,
+          tolerance: c.tolerance ?? TOLERANCE_DEFAULT,
+        };
+      });
+      setCheckpoints(cps); setSelected(null); setSaved(false);
+      setBusy(cps.length ? "" : "no saved reference for this movement yet");
+    } catch (e) { setBusy("could not load reference: " + String(e)); }
+  }, [boundMovement, boundStyle]);
 
   const onLoaded = useCallback(async () => {
     const v = videoRef.current;
@@ -133,6 +194,7 @@ export default function AuthorStudio({ movementId, styleId, src, onExit }: Props
       auditScore: validatePose(audited).auditScore,
       correctionMagnitude: 0,
       audited: false,
+      tolerance: TOLERANCE_DEFAULT,
     };
     setCheckpoints((cs) => [...cs, cp]);
     setSelected(cp.index);
@@ -202,10 +264,25 @@ export default function AuthorStudio({ movementId, styleId, src, onExit }: Props
         original_landmarks: fromLM(c.originalCoordinates),
         audit_score: c.auditScore,
         correction_magnitude: c.correctionMagnitude,
+        tolerance: c.tolerance,
       })));
+      try { localStorage.removeItem(draftKey(boundMovement)); } catch { /* best-effort */ }
       setBusy(""); setSaved(true);
     } catch (e) { setBusy("save failed: " + String(e)); }
   }, [boundMovement, boundStyle, checkpoints]);
+
+  // Autosave the working set on every change so a refresh never loses work.
+  useEffect(() => {
+    if (boundMovement) saveDraft(boundMovement, checkpoints);
+  }, [boundMovement, checkpoints]);
+
+  // Per-checkpoint tolerance edit (does not invalidate the audit — it's a gate
+  // setting, not a pose change).
+  const onTolerance = useCallback((value: number) => {
+    if (selected === null) return;
+    setCheckpoints((cs) => cs.map((c) => (c.index === selected ? { ...c, tolerance: value } : c)));
+    setSaved(false);
+  }, [selected]);
 
   // Direct src (prop) or a movement passed in — load on mount.
   useEffect(() => { if (src && videoRef.current) videoRef.current.src = src; }, [src]);
@@ -252,7 +329,9 @@ export default function AuthorStudio({ movementId, styleId, src, onExit }: Props
               <select value={boundMovement} onChange={(e) => bindMovement(e.target.value)}>
                 <option value="">— pick one —</option>
                 {movements.map((m) => (
-                  <option key={m.movement_id} value={m.movement_id}>{m.name}</option>
+                  <option key={m.movement_id} value={m.movement_id}>
+                    {m.name}{m.reference_status === "pending" ? " — needs authoring" : ""}
+                  </option>
                 ))}
               </select>
             </label>
@@ -264,7 +343,12 @@ export default function AuthorStudio({ movementId, styleId, src, onExit }: Props
             </label>
           )}
           {boundMovement && (
-            <span className="author-bound-id">id: {boundMovement}</span>
+            <>
+              <button className="author-load-ref" onClick={loadSavedReference}>
+                ⤓ Load saved reference
+              </button>
+              <span className="author-bound-id">id: {boundMovement}</span>
+            </>
           )}
         </div>
       )}
@@ -333,6 +417,21 @@ export default function AuthorStudio({ movementId, styleId, src, onExit }: Props
                 </li>
               ))}
             </ul>
+            <label className="audit-tolerance">
+              Match tolerance <b>{sel.tolerance}</b>
+              <input
+                type="range"
+                min={TOLERANCE_MIN}
+                max={TOLERANCE_MAX}
+                step={1}
+                value={sel.tolerance}
+                onChange={(e) => onTolerance(Number(e.target.value))}
+              />
+              <span className="audit-tolerance-hint">
+                {sel.tolerance < 60 ? "forgiving" : sel.tolerance < 80 ? "standard" : "strict"} —
+                students must score ≥{sel.tolerance} to pass this pose
+              </span>
+            </label>
             <div className="audit-actions">
               <button onClick={reDetect}>↺ Re-detect</button>
               <button

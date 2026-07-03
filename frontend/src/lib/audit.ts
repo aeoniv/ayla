@@ -19,7 +19,12 @@ export interface AuditedCheckpoint {
   auditScore: number;             // 0..1 validity/confidence
   correctionMagnitude: number;    // mean torso-normalized drag from raw
   audited: boolean;               // passed validity AND author-confirmed
+  tolerance: number;              // per-checkpoint match gate (30-95)
 }
+
+export const TOLERANCE_DEFAULT = 75;
+export const TOLERANCE_MIN = 30;
+export const TOLERANCE_MAX = 95;
 
 export const AUDIT_PASS = 0.6;    // validity threshold to allow 'Audited'
 
@@ -139,12 +144,3 @@ export function correctionMagnitude(original: LM[], audited: LM[]): number {
   for (let i = 0; i < n; i++) sum += dist(original[i], audited[i]);
   return sum / n / torso;
 }
-
-/** Recompute derived fields after an edit; returns a new checkpoint object. */
-export function reaudit(cp: AuditedCheckpoint): AuditedCheckpoint {
-  const { auditScore } = validatePose(cp.auditedCoordinates);
-  const correctionMagnitude = correctionMagnitude_(cp);
-  return { ...cp, auditScore, correctionMagnitude };
-}
-const correctionMagnitude_ = (cp: AuditedCheckpoint) =>
-  correctionMagnitude(cp.originalCoordinates, cp.auditedCoordinates);

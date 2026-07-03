@@ -79,6 +79,9 @@ def catalog(owner: SessionUser = Depends(require_owner)):
             "name": m.get("name", ""),
             "style_name": styles.get(m.get("style_id"), ""),
             "price_stars": price,
+            # "pending" means the movement can't be practiced yet — it needs
+            # authoring in the Studio before its practice loop can sell itself.
+            "reference_status": m.get("reference_status", "pending"),
             "unlocks": unlocks,
             "views": int(m.get("view_count", 0)),
             "attempts": int(m.get("attempt_count", 0)),

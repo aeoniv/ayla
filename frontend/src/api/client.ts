@@ -102,6 +102,7 @@ export interface CatVariant {
 }
 export interface CatMovement {
   movement_id: string; name: string; style_name: string; price_stars: number;
+  reference_status: string;   // "pending" = not practicable until authored
   unlocks: number; views: number; attempts: number; est_stars: number; variants: CatVariant[];
 }
 export interface Catalog {
@@ -177,7 +178,11 @@ export const getCheckpoints = (movementId: string, styleId: string) =>
 
 export interface ReferenceResponse {
   movement_id: string; style_id: string;
-  checkpoints: { index: number; landmarks: number[][] }[];
+  checkpoints: {
+    index: number; landmarks: number[][];
+    timestamp_seconds: number | null; tolerance: number;
+    original_landmarks: number[][] | null; audit_score: number | null;
+  }[];
 }
 export const getReference = (movementId: string, styleId: string) =>
   req<ReferenceResponse>(POSE, `/score/reference/${movementId}/${styleId}`);
@@ -189,6 +194,7 @@ export interface AuditedCheckpointPayload {
   original_landmarks: number[][];
   audit_score: number;
   correction_magnitude: number;
+  tolerance: number;   // per-checkpoint match gate (30-95)
 }
 // Persist an author-audited reference (owner-gated). Sends the exact, corrected
 // landmarks per checkpoint plus their frame timestamps and audit metadata.
