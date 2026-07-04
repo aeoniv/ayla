@@ -22,7 +22,6 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
   const [error, setError] = useState("");
   const [align, setAlign] = useState(true);
   const [difficulty, setDifficulty] = useState(70);
-  const [debug, setDebug] = useState("");
 
   const alignRef = useRef(true);
   const thresholdRef = useRef(70);
@@ -36,7 +35,6 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
   const phaseRef = useRef<Phase>("loading");
   const currentRef = useRef(0);
   const lastScoreT = useRef(0);
-  const lastDbgT = useRef(0);
   const scoring = useRef(false);
   const poseReady = useRef(false);
   const camOk = useRef(false);
@@ -111,7 +109,6 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
         }
 
         // 2) The student's live skeleton, snapped onto the avatar's body anchor.
-        let lmCount = 0;
         if (poseReady.current && camOk.current && cam && cam.videoWidth > 0) {
           let lm: number[][] | null = null;
           try { lm = detect(cam, t); } catch { /* detector hiccup */ }
@@ -120,7 +117,7 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
             // real-time gate, and the final attempt — so what the user sees and
             // what we score can never disagree.
             const view = mirrorPose(lm);
-            latestLm.current = view; lmCount = view.length;
+            latestLm.current = view;
             const camA = cam.videoWidth ? cam.videoWidth / cam.videoHeight : undefined;
             drawSkeleton(cv, view, {
               regionScores: gating ? regionScores.current : undefined, srcAspect: camA,
@@ -128,16 +125,6 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
               matchThreshold: gating ? thresholdRef.current : undefined, clear: false,
             });
           }
-        }
-
-        // 3) debug readout (throttled)
-        if (t - lastDbgT.current > 400) {
-          lastDbgT.current = t;
-          setDebug(
-            `phase:${phaseRef.current} cam:${camOk.current ? "on" : "off"} ` +
-            `camRes:${cam ? cam.videoWidth + "x" + cam.videoHeight : "-"} rs:${cam?.readyState} ` +
-            `pose:${poseReady.current} lm:${lmCount} tgt:${(targetLm.current[currentRef.current]?.length ?? 0)} score:${score ?? "-"}`,
-          );
         }
       }
 
@@ -171,7 +158,7 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
       if (camVideo.current) { camVideo.current.srcObject = stream; await camVideo.current.play().catch(() => {}); }
       camOk.current = true;
-    } catch (e) { camOk.current = false; setDebug("camera denied: " + e); }
+    } catch { camOk.current = false; }
     setPhase("playing");
   }
 
@@ -233,9 +220,7 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
         </div>
       )}
 
-      {debug && <div className="debug-hud">{debug}</div>}
-
-      {phase === "scoring" && <div className="center">Scoring your run…</div>}
+      {phase === "scoring" &&<div className="center">Scoring your run…</div>}
 
       {phase === "done" && coach && (
         <div className="coach">
