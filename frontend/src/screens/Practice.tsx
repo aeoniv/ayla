@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  CheckpointMeta, CoachResult, coachNext, getCheckpoints, getFullVideo,
-  getReference, matchCheckpoint, submitAttempt,
+  CheckpointMeta, CoachResult, coachNext, createInvoice, getCheckpoints,
+  getFullVideo, getReference, matchCheckpoint, submitAttempt,
 } from "../api/client";
+import { openInvoice } from "../lib/telegram";
 import { Anchor, detect, drawSkeleton, initPose, mirrorPose, skeletonAnchor } from "../lib/pose";
 
 interface Props {
@@ -22,6 +23,9 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
   const [error, setError] = useState("");
   const [align, setAlign] = useState(true);
   const [difficulty, setDifficulty] = useState(70);
+  const [guided, setGuided] = useState(true);
+  const [skipOwned, setSkipOwned] = useState(false);
+  const [skipPrice, setSkipPrice] = useState(0);
 
   const alignRef = useRef(true);
   const thresholdRef = useRef(70);
@@ -75,6 +79,8 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
         ]);
         if (cancelled) return;
         setCheckpoints(cps.checkpoints);
+        setSkipOwned(full.skip_guidance);
+        setSkipPrice(full.skip_guidance_price_stars);
         if (refVideo.current && full.full_url) {
           refVideo.current.src = full.full_url; refVideo.current.load();
         }
@@ -161,6 +167,7 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
 
   // Begin requires a user gesture (Telegram webview blocks autoplay + camera).
   async function begin() {
+    setGuided(true);
     try { await refVideo.current?.play(); } catch { /* keep going */ }
     try {
       // Modest resolution/fps: the detector only needs ~256px input, and big
@@ -174,22 +181,42 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
     setPhase("playing");
   }
 
+  // Watch the full form with no guided checkpoints — a paid per-movement perk.
+  async function beginUnguided() {
+    if (!skipOwned) {
+      try {
+        const { invoice_link } = await createInvoice({ skip_guidance_movement_id: movementId });
+        const status = await openInvoice(invoice_link);
+        if (status !== "paid") return;
+        setSkipOwned(true);
+      } catch { return; }
+    }
+    setGuided(false);
+    camOk.current = false; // no camera, no gating, no scoring
+    try { await refVideo.current?.play(); } catch { /* keep going */ }
+    setPhase("playing");
+  }
+
   const onTimeUpdate = useCallback(() => {
     const v = refVideo.current;
-    if (!v || phase !== "playing") return;
+    if (!v || phase !== "playing" || !guided) return;
     const cp = checkpoints[current];
     if (cp && v.currentTime >= cp.timestamp_seconds) {
       v.pause();
       if (camOk.current) setPhase("gating"); // no camera → just keep playing
       else v.play().catch(() => {});
     }
-  }, [phase, checkpoints, current]);
+  }, [phase, checkpoints, current, guided]);
 
   return (
     <div className="practice immersive">
       <button className="exit" onClick={onExit}>✕</button>
 
-      <video ref={refVideo} className="avatar-fs" playsInline muted onTimeUpdate={onTimeUpdate} />
+      <video
+        ref={refVideo} className="avatar-fs" playsInline muted
+        onTimeUpdate={onTimeUpdate}
+        onEnded={() => { if (!guided) setPhase("done"); }}
+      />
       <canvas ref={overlay} className="pose-overlay" />
       <video ref={camVideo} className="cam-src" playsInline muted />
 
@@ -198,12 +225,15 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
       {phase === "ready" && (
         <div className="begin-gate">
           <p>The blue skeleton is the avatar's pose — mirror it.<br />Stand back so your whole body fits.</p>
-          <button onClick={begin}>▶ Begin practice</button>
-          <span className="tiny">Grant camera access when asked</span>
+          <button onClick={begin}>▶ Learn with guidance</button>
+          <button className="skip-guidance" onClick={beginUnguided}>
+            {skipOwned ? "Watch full form freely" : `Skip guidance — ⭐${skipPrice}`}
+          </button>
+          <span className="tiny">Guided practice uses your camera for pose feedback</span>
         </div>
       )}
 
-      {(phase === "playing" || phase === "gating") && (
+      {guided && (phase === "playing" || phase === "gating") && (
         <>
           <div className="practice-controls">
             <button className={align ? "ctl on" : "ctl"} onClick={() => setAlign((a) => !a)}>
@@ -233,6 +263,13 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
       )}
 
       {phase === "scoring" &&<div className="center">Scoring your run…</div>}
+
+      {phase === "done" && !coach && (
+        <div className="coach">
+          <h3>Full form complete</h3>
+          <button onClick={onExit}>Back to feed</button>
+        </div>
+      )}
 
       {phase === "done" && coach && (
         <div className="coach">

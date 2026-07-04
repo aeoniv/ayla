@@ -52,10 +52,12 @@ class ProgressResponse(BaseModel):
 
 
 class InvoiceRequest(BaseModel):
-    # exactly one of movement_id / variant_id / subscription_tier
+    # exactly one of movement_id / variant_id / subscription_tier / skip_guidance_movement_id
     movement_id: str | None = None
     variant_id: str | None = None
     subscription_tier: str | None = None
+    # Pay to skip guided practice on a movement the user already owns.
+    skip_guidance_movement_id: str | None = None
 
 
 class InvoiceResponse(BaseModel):

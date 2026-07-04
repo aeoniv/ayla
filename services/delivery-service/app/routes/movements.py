@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..deps import SessionUser, current_user
-from ..firestore import db, has_movement_entitlement, has_variant_entitlement
+from ..firestore import db, has_movement_entitlement, has_skip_guidance, has_variant_entitlement
 from ..gcs import sign
 from ..models import VariantItem
 
@@ -25,6 +25,12 @@ def full_video(movement_id: str, user: SessionUser = Depends(current_user)):
         "movement_id": movement_id,
         "style_id": d.get("style_id"),
         "full_url": sign(d.get("full_video_path")),
+        # Guidance-skip perk: owned? and how much to buy it (same default as
+        # payment._load_priced_item: half the movement price).
+        "skip_guidance": has_skip_guidance(user.user_id, movement_id),
+        "skip_guidance_price_stars": int(
+            d.get("skip_guidance_price_stars") or max(1, int(d.get("price_stars", 0)) // 2)
+        ),
     }
 
 

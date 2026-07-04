@@ -149,9 +149,10 @@ export const createVariant = (d: {
 };
 
 export const getFullVideo = (movementId: string) =>
-  req<{ movement_id: string; style_id: string; full_url: string | null }>(
-    DELIVERY, `/movement/${movementId}/full`,
-  );
+  req<{
+    movement_id: string; style_id: string; full_url: string | null;
+    skip_guidance: boolean; skip_guidance_price_stars: number;
+  }>(DELIVERY, `/movement/${movementId}/full`);
 
 export const likeMovement = (movementId: string) =>
   req<{ liked: boolean; like_count: number }>(
@@ -167,7 +168,9 @@ export const postProgress = (movementId: string, variantId: string | null, secon
     body: JSON.stringify({ movement_id: movementId, variant_id: variantId, seconds }),
   });
 
-export const createInvoice = (target: { movement_id?: string; variant_id?: string }) =>
+export const createInvoice = (
+  target: { movement_id?: string; variant_id?: string; skip_guidance_movement_id?: string },
+) =>
   req<{ invoice_link: string }>(DELIVERY, "/payment/create-invoice", {
     method: "POST", body: JSON.stringify(target),
   });

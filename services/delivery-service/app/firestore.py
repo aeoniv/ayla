@@ -96,6 +96,21 @@ def has_variant_entitlement(user_id: str, variant_id: str) -> bool:
     return _has_active_subscription(user_id)
 
 
+def has_skip_guidance(user_id: str, movement_id: str) -> bool:
+    """True if the user paid to skip guided practice for this movement.
+
+    Deliberately NOT covered by subscriptions — it is a per-movement perk.
+    """
+    ent = db().collection("entitlements")
+    q = (
+        ent.where("user_id", "==", user_id)
+        .where("scope", "==", "skip_guidance")
+        .where("movement_id", "==", movement_id)
+        .limit(1)
+    )
+    return bool(list(q.stream()))
+
+
 def grant_entitlement(
     charge_id: str,
     user_id: str,

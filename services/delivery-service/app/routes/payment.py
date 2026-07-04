@@ -42,6 +42,20 @@ def _load_priced_item(body: InvoiceRequest) -> tuple[str, str, int, dict]:
             int(d.get("price_stars", 0)),
             {"scope": "variant", "variant_id": body.variant_id},
         )
+    if body.skip_guidance_movement_id:
+        mid = body.skip_guidance_movement_id
+        doc = db().collection("movements").document(mid).get()
+        if not doc.exists:
+            raise HTTPException(404, "movement not found")
+        d = doc.to_dict()
+        # Owner can set skip_guidance_price_stars per movement; default half price.
+        price = int(d.get("skip_guidance_price_stars") or max(1, int(d.get("price_stars", 0)) // 2))
+        return (
+            f"Skip guidance — {d.get('name', 'Movement')}",
+            "Watch the full form freely, without guided practice",
+            price,
+            {"scope": "skip_guidance", "movement_id": mid},
+        )
     if body.subscription_tier:
         # Reserved for a future "unlock all" tier; not sold yet.
         raise HTTPException(400, "subscription tier not available yet")
@@ -132,7 +146,7 @@ async def payment_webhook(request: Request):
 
     scope = payload.get("scope")
     user_id = payload.get("user_id")
-    if not user_id or scope not in ("movement", "variant", "subscription"):
+    if not user_id or scope not in ("movement", "variant", "subscription", "skip_guidance"):
         raise HTTPException(400, "invalid invoice_payload")
 
     # 3) Stars subscriptions: convert expiry (unix seconds) if present.
@@ -146,7 +160,7 @@ async def payment_webhook(request: Request):
         charge_id=charge_id,
         user_id=user_id,
         scope=scope,
-        movement_id=payload.get("movement_id") if scope == "movement" else None,
+        movement_id=payload.get("movement_id") if scope in ("movement", "skip_guidance") else None,
         variant_id=payload.get("variant_id") if scope == "variant" else None,
         subscription_tier=payload.get("subscription_tier") if scope == "subscription" else None,
         subscription_expires_at=expires_at,

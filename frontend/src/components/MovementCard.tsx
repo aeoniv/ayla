@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  createInvoice, FeedItem, getFullVideo, getVariants, likeMovement,
+  createInvoice, FeedItem, getVariants, likeMovement,
   postProgress, VariantItem,
 } from "../api/client";
 import { openInvoice, shareMovement } from "../lib/telegram";
@@ -20,8 +20,6 @@ export default function MovementCard({ item, active, onPractice }: Props) {
   const [index, setIndex] = useState(0);
   const [locked, setLocked] = useState(false);            // main-video 12s lock
   const [mainEntitled, setMainEntitled] = useState(item.entitled);
-  const [playingFull, setPlayingFull] = useState(false);  // "Learn" → full video
-  const [fullUrl, setFullUrl] = useState<string | null>(null);
   const [liked, setLiked] = useState(item.liked);
   const [likeCount, setLikeCount] = useState(item.like_count);
   const [drag, setDrag] = useState(0);
@@ -57,10 +55,10 @@ export default function MovementCard({ item, active, onPractice }: Props) {
   }, [item.movement_id, mainEntitled]);
 
   useEffect(() => {
-    if (!active || !isMain || locked || playingFull) return;
+    if (!active || !isMain || locked) return;
     pollRef.current = window.setInterval(tick, 1000);
     return () => { if (pollRef.current) window.clearInterval(pollRef.current); };
-  }, [active, isMain, locked, playingFull, tick]);
+  }, [active, isMain, locked, tick]);
 
   // Only the visible slide's video plays; everything else pauses.
   useEffect(() => {
@@ -71,7 +69,7 @@ export default function MovementCard({ item, active, onPractice }: Props) {
       if (isCurrent && playable) v.play().catch(() => {});
       else v.pause();
     });
-  }, [active, index, locked, variants, playingFull, fullUrl]);
+  }, [active, index, locked, variants]);
 
   // --- swipe handling -----------------------------------------------------
   function onPointerDown(e: React.PointerEvent) {
@@ -98,15 +96,15 @@ export default function MovementCard({ item, active, onPractice }: Props) {
     const velocity = drag / Math.max(dt, 1);
     if (Math.abs(drag) > width * SWIPE_RATIO || Math.abs(velocity) > 0.5) {
       setIndex((i) => clamp(i + (drag < 0 ? 1 : -1)));
-      setPlayingFull(false); // leaving the main slide stops full playback
     }
     setDragging(false); setDrag(0);
   }
 
-  async function buyMain() {
+  async function buyMain(): Promise<boolean> {
     const { invoice_link } = await createInvoice({ movement_id: item.movement_id });
     const status = await openInvoice(invoice_link);
-    if (status === "paid") { setMainEntitled(true); setLocked(false); }
+    if (status === "paid") { setMainEntitled(true); setLocked(false); return true; }
+    return false;
   }
   async function buyVariant(v: VariantItem) {
     const { invoice_link } = await createInvoice({ variant_id: v.variant_id });
@@ -114,16 +112,11 @@ export default function MovementCard({ item, active, onPractice }: Props) {
     if (status === "paid") setVariants(await getVariants(item.movement_id));
   }
 
-  // "Learn": play the full paid video inline (buy first if needed).
+  // "Learn": buy if needed, then go straight to the full-form screen (which
+  // offers guided practice, or paid guidance-skip).
   async function learn() {
-    setIndex(0);
-    if (!mainEntitled) { await buyMain(); return; }
-    let url = fullUrl;
-    if (!url) {
-      try { url = (await getFullVideo(item.movement_id)).full_url; setFullUrl(url); }
-      catch { return; }
-    }
-    if (url) setPlayingFull(true);
+    if (!mainEntitled && !(await buyMain())) return;
+    onPractice(item.movement_id, item.style_id);
   }
 
   async function toggleLike() {
@@ -150,8 +143,7 @@ export default function MovementCard({ item, active, onPractice }: Props) {
         <div className="swipe-track" ref={trackRef} style={trackStyle}>
           {slides.map((v, i) => {
             const main = i === 0;
-            const mainSrc = playingFull && fullUrl ? fullUrl : item.teaser_url;
-            const url = main ? mainSrc : v?.teaser_url ?? null;
+            const url = main ? item.teaser_url : v?.teaser_url ?? null;
             const blurred = !main && (v?.blurred ?? true);
             const mountVideo = active && url;
             return (
@@ -165,15 +157,14 @@ export default function MovementCard({ item, active, onPractice }: Props) {
                       playsInline
                       muted
                       autoPlay={i === index}
-                      loop={!main || (main && !playingFull)}
-                      controls={main && playingFull}
+                      loop
                       preload="metadata"
                     />
                   ) : (
                     <div className="video placeholder" />
                   )}
 
-                  {main && locked && !playingFull && (
+                  {main && locked && (
                     <div className="overlay">
                       <p>Free preview ended (12s).</p>
                       <button onClick={buyMain}>Unlock full movement — ⭐{item.price_stars}</button>
@@ -219,11 +210,6 @@ export default function MovementCard({ item, active, onPractice }: Props) {
         <div className="card-info">
           <h2>{item.name}{!isMain && <span className="variant-tag"> · variant</span>}</h2>
           {item.description && <p className="desc">{item.description}</p>}
-          {isMain && mainEntitled && (
-            <button className="practice-link" onClick={() => onPractice(item.movement_id, item.style_id)}>
-              Practice with pose feedback →
-            </button>
-          )}
         </div>
       </div>
     </section>
