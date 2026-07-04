@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import SkeletonOverlay from "../components/authoring/SkeletonOverlay";
 import TimelineEditor from "../components/authoring/TimelineEditor";
-import { detect, initPose } from "../lib/pose";
+import { detectImage, initPoseImage } from "../lib/pose";
 import { measureFps, seekTo, seekToFrame, stepFrame } from "../lib/video";
 import {
   AUDIT_PASS, AuditedCheckpoint, LM, TOLERANCE_DEFAULT, TOLERANCE_MAX, TOLERANCE_MIN,
@@ -66,7 +66,7 @@ export default function AuthorStudio({ movementId, styleId, src, onExit }: Props
   const [busy, setBusy] = useState("");
   const [saved, setSaved] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [showGuide, setShowGuide] = useState(true);
+  const [showGuide, setShowGuide] = useState(false);
   const [movements, setMovements] = useState<CatMovement[]>([]);
   const [boundMovement, setBoundMovement] = useState(movementId ?? "");
   const [boundStyle, setBoundStyle] = useState(styleId ?? "");
@@ -74,8 +74,13 @@ export default function AuthorStudio({ movementId, styleId, src, onExit }: Props
 
   const sel = checkpoints.find((c) => c.index === selected) ?? null;
 
-  // Load the pose model once.
-  useEffect(() => { initPose().then(() => setReady(true)).catch(() => setReady(true)); }, []);
+  // Load the pose model once. Surface failure instead of silently pretending
+  // it worked — a broken detector then said "no pose detected" forever.
+  useEffect(() => {
+    initPoseImage()
+      .then(() => setReady(true))
+      .catch((e) => { setReady(true); setBusy("pose model failed to load: " + String(e)); });
+  }, []);
 
   // If no movement was passed in, offer the owner's catalog to pick from.
   useEffect(() => {
@@ -173,7 +178,7 @@ export default function AuthorStudio({ movementId, styleId, src, onExit }: Props
 
   const detectHere = useCallback((): LM[] | null => {
     const v = videoRef.current; if (!v) return null;
-    const raw = detect(v, performance.now());
+    const raw = detectImage(v);
     return raw ? toLM(raw) : null;
   }, []);
 
@@ -303,7 +308,6 @@ export default function AuthorStudio({ movementId, styleId, src, onExit }: Props
         {onExit && <button className="exit" onClick={onExit}>✕</button>}
         <div className="author-title">
           <span className="author-title-main">Authoring studio</span>
-          <span className="author-title-sub">Mark pose checkpoints → audit → save reference</span>
         </div>
         <button
           className="author-guide-toggle"
@@ -407,9 +411,6 @@ export default function AuthorStudio({ movementId, styleId, src, onExit }: Props
               </span>
               <span className="audit-corr">Δ {(sel.correctionMagnitude * 100).toFixed(0)}%</span>
             </div>
-            <p className="audit-hint" style={{ marginTop: 4 }}>
-              Drag any joint on the skeleton above to correct MediaPipe. Editing reopens the audit.
-            </p>
             <ul className="audit-checks">
               {validation.checks.map((c) => (
                 <li key={c.name} className={c.ok ? "ok" : "bad"}>
@@ -428,8 +429,7 @@ export default function AuthorStudio({ movementId, styleId, src, onExit }: Props
                 onChange={(e) => onTolerance(Number(e.target.value))}
               />
               <span className="audit-tolerance-hint">
-                {sel.tolerance < 60 ? "forgiving" : sel.tolerance < 80 ? "standard" : "strict"} —
-                students must score ≥{sel.tolerance} to pass this pose
+                {sel.tolerance < 60 ? "forgiving" : sel.tolerance < 80 ? "standard" : "strict"}
               </span>
             </label>
             <div className="audit-actions">
@@ -445,9 +445,7 @@ export default function AuthorStudio({ movementId, styleId, src, onExit }: Props
           </div>
         ) : (
           <p className="author-idle-hint">
-            {checkpoints.length === 0
-              ? "Play the video, pause on a key pose, then hit \"＋ Pose marker\"."
-              : "Click a marker on the timeline to audit it."}
+            {checkpoints.length === 0 ? "Pause on a key pose → ＋ Pose marker" : "Tap a marker to audit it"}
           </p>
         )}
 

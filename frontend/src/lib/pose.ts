@@ -3,33 +3,48 @@
 
 import { FilesetResolver, PoseLandmarker } from "@mediapipe/tasks-vision";
 
-let landmarker: PoseLandmarker | null = null;
+let landmarker: PoseLandmarker | null = null;        // VIDEO mode (practice)
+let imageLandmarker: PoseLandmarker | null = null;   // IMAGE mode (studio)
 
-export async function initPose(): Promise<void> {
-  if (landmarker) return;
-  const fileset = await FilesetResolver.forVisionTasks(
+async function loadFileset() {
+  return FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm",
   );
-  const opts = (delegate: "GPU" | "CPU") => ({
-    baseOptions: {
-      modelAssetPath:
-        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
-      delegate,
-    },
-    // VIDEO mode tracks the pose between frames instead of running a full
-    // detection every time — much cheaper on low-end phones than IMAGE mode.
-    runningMode: "VIDEO" as const,
-    numPoses: 1,
-    minPoseDetectionConfidence: 0.3,
-    minPosePresenceConfidence: 0.3,
-    minTrackingConfidence: 0.3,
-  });
-  // GPU is far cheaper on low-end phones; fall back to CPU where WebGL fails.
+}
+
+const opts = (delegate: "GPU" | "CPU", runningMode: "VIDEO" | "IMAGE") => ({
+  baseOptions: {
+    modelAssetPath:
+      "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+    delegate,
+  },
+  runningMode,
+  numPoses: 1,
+  minPoseDetectionConfidence: 0.3,
+  minPosePresenceConfidence: 0.3,
+  minTrackingConfidence: 0.3,
+});
+
+// GPU is far cheaper on low-end phones; fall back to CPU where WebGL fails.
+async function create(runningMode: "VIDEO" | "IMAGE"): Promise<PoseLandmarker> {
+  const fileset = await loadFileset();
   try {
-    landmarker = await PoseLandmarker.createFromOptions(fileset, opts("GPU"));
+    return await PoseLandmarker.createFromOptions(fileset, opts("GPU", runningMode));
   } catch {
-    landmarker = await PoseLandmarker.createFromOptions(fileset, opts("CPU"));
+    return await PoseLandmarker.createFromOptions(fileset, opts("CPU", runningMode));
   }
+}
+
+// VIDEO mode tracks the pose between frames instead of running a full
+// detection every time — much cheaper on low-end phones than IMAGE mode.
+export async function initPose(): Promise<void> {
+  if (!landmarker) landmarker = await create("VIDEO");
+}
+
+// IMAGE mode: full detection on a single painted frame. The studio seeks and
+// pauses arbitrarily, which breaks VIDEO-mode tracking assumptions.
+export async function initPoseImage(): Promise<void> {
+  if (!imageLandmarker) imageLandmarker = await create("IMAGE");
 }
 
 /**
@@ -43,6 +58,15 @@ export function detect(video: HTMLVideoElement, timestampMs: number): number[][]
   const ts = Math.max(Math.floor(timestampMs), lastTs + 1);
   lastTs = ts;
   const res = landmarker.detectForVideo(video, ts);
+  const lms = res.landmarks?.[0];
+  if (!lms || lms.length < 33) return null;
+  return lms.map((l) => [l.x, l.y, l.z, l.visibility ?? 1]);
+}
+
+/** Detect on the exact current frame of a (usually paused/seeked) video. */
+export function detectImage(video: HTMLVideoElement): number[][] | null {
+  if (!imageLandmarker) return null;
+  const res = imageLandmarker.detect(video);
   const lms = res.landmarks?.[0];
   if (!lms || lms.length < 33) return null;
   return lms.map((l) => [l.x, l.y, l.z, l.visibility ?? 1]);
