@@ -7,7 +7,7 @@ app = FastAPI(title="Ayla delivery-service", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://ayla-bot.web.app", "https://web.telegram.org"],
+    allow_origins=["https://studio-3654876024-6b075.web.app", "https://ayla-bot.web.app", "https://web.telegram.org"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
