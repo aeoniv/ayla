@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 
 from ..deps import SessionUser, current_user
-from ..firestore import (
+from ..firestore import (  # noqa: I001
+    referral_summary,
     db, entitled_movement_set, list_user_entitlements, liked_set, toggle_like,
 )
 from ..gcs import sign
@@ -110,3 +111,9 @@ def my_purchases(user: SessionUser = Depends(current_user)):
                 names[mid] = snap.to_dict().get("name", "")
         e["movement_name"] = names.get(mid)
     return {"count": len(ents), "purchases": ents}
+
+
+@router.get("/me/referrals")
+def my_referrals(user: SessionUser = Depends(current_user)):
+    """Stars earned by sharing (10% of each purchase made by referred users)."""
+    return referral_summary(user.user_id)

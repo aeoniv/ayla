@@ -4,6 +4,7 @@ import {
   getFullVideo, getReference, matchCheckpoint, submitAttempt,
 } from "../api/client";
 import { openInvoice } from "../lib/telegram";
+import { CameraIcon, PlayIcon } from "../components/icons";
 import { Anchor, detect, drawSkeleton, initPose, mirrorPose, skeletonAnchor } from "../lib/pose";
 
 interface Props {
@@ -224,12 +225,21 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
 
       {phase === "ready" && (
         <div className="begin-gate">
-          <p>The blue skeleton is the avatar's pose — mirror it.<br />Stand back so your whole body fits.</p>
-          <button onClick={begin}>▶ Learn with guidance</button>
-          <button className="skip-guidance" onClick={beginUnguided}>
-            {skipOwned ? "Watch full form freely" : `Skip guidance — ⭐${skipPrice}`}
-          </button>
-          <span className="tiny">Guided practice uses your camera for pose feedback</span>
+          <h3 className="gate-title">How do you want to learn?</h3>
+          <div className="gate-cards">
+            <button className="gate-card" onClick={begin}>
+              <span className="gate-ico"><CameraIcon size={30} /></span>
+              <b>With guidance</b>
+              <small>Your camera tracks your pose. The video pauses at each key posture until you match it — limbs glow green when right.</small>
+              <span className="gate-price free">Included</span>
+            </button>
+            <button className="gate-card alt" onClick={beginUnguided}>
+              <span className="gate-ico"><PlayIcon size={30} /></span>
+              <b>Skip guidance</b>
+              <small>Watch the full form start to finish at your own pace. No camera, no pauses.</small>
+              <span className="gate-price">{skipOwned ? "Owned ✓" : `⭐${skipPrice}`}</span>
+            </button>
+          </div>
         </div>
       )}
 

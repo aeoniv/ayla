@@ -4,10 +4,12 @@ import {
   postProgress, VariantItem,
 } from "../api/client";
 import { openInvoice, shareMovement } from "../lib/telegram";
+import { HeartIcon, LearnIcon, ShareIcon } from "./icons";
 
 interface Props {
   item: FeedItem;
   active: boolean;
+  userId: string;
   onPractice: (movementId: string, styleId: string) => void;
 }
 
@@ -15,7 +17,7 @@ interface Props {
 const SWIPE_RATIO = 0.22;
 
 // index 0 = the main movement (its own teaser); 1..n = style variants.
-export default function MovementCard({ item, active, onPractice }: Props) {
+export default function MovementCard({ item, active, userId, onPractice }: Props) {
   const [variants, setVariants] = useState<VariantItem[]>([]);
   const [index, setIndex] = useState(0);
   const [locked, setLocked] = useState(false);            // main-video 12s lock
@@ -193,15 +195,15 @@ export default function MovementCard({ item, active, onPractice }: Props) {
         {/* TikTok-style action rail */}
         <div className="rail">
           <button className={liked ? "rail-btn liked" : "rail-btn"} onClick={toggleLike}>
-            <span className="ico">{liked ? "❤️" : "🤍"}</span>
+            <span className="ico"><HeartIcon filled={liked} /></span>
             <span className="lbl">{likeCount}</span>
           </button>
           <button className="rail-btn" onClick={learn}>
-            <span className="ico">🎓</span>
+            <span className="ico"><LearnIcon /></span>
             <span className="lbl">{mainEntitled ? "Learn" : `⭐${item.price_stars}`}</span>
           </button>
-          <button className="rail-btn" onClick={() => shareMovement(item.name)}>
-            <span className="ico">↗</span>
+          <button className="rail-btn" onClick={() => shareMovement(item.name, userId)}>
+            <span className="ico"><ShareIcon /></span>
             <span className="lbl">Share</span>
           </button>
         </div>

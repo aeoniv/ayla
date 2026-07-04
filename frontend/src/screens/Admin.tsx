@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import {
-  Catalog, createAvatar, createMovement, createStyle, createVariant,
-  getCatalog, getRevenue, Revenue,
+  Catalog, CourseMember, createAvatar, createMovement, createStyle, createVariant,
+  getCatalog, getCourseMembers, getRevenue, Revenue,
 } from "../api/client";
+import { BackIcon, EyeIcon, TargetIcon, UnlockIcon, UsersIcon } from "../components/icons";
 
 // Phase 7 — owner-only content + earnings management.
 export default function Admin(
@@ -32,8 +33,8 @@ export default function Admin(
   return (
     <div className="admin">
       <div className="admin-top">
-        <button className="exit" onClick={onExit}>‹</button>
-        <h2>Admin</h2>
+        <button className="exit" onClick={onExit}><BackIcon /></button>
+        <h2>Courses</h2>
         {onOpenAuthor && (
           <button className="admin-author-btn" onClick={() => onOpenAuthor()}>Studio</button>
         )}
@@ -53,16 +54,19 @@ export default function Admin(
 
       {msg && <p className="admin-msg">{msg}</p>}
 
-      {/* Catalog + performance */}
+      {/* Courses: per course — Studio (authoring) + Members (learner progress) */}
       <section>
-        <h4>Content ({cat?.movements.length ?? 0})</h4>
+        <h4>Courses ({cat?.movements.length ?? 0})</h4>
         {cat?.movements.map((m) => (
           <div className="mv" key={m.movement_id}>
             <div className="mv-head">
               <b>{m.name}</b><span className="tag">{m.style_name} · ⭐{m.price_stars}</span>
             </div>
             <div className="stat">
-              👁 {m.views} · 🎯 {m.attempts} · 🔓 {m.unlocks} · ⭐{m.est_stars}
+              <span className="stat-i"><EyeIcon /> {m.views}</span>
+              <span className="stat-i"><TargetIcon /> {m.attempts}</span>
+              <span className="stat-i"><UnlockIcon /> {m.unlocks}</span>
+              <span className="stat-i">⭐{m.est_stars}</span>
             </div>
             {m.variants.map((v) => (
               <div className="var" key={v.variant_id}>
@@ -72,9 +76,10 @@ export default function Admin(
             <div className="mv-actions">
               {onOpenAuthor && (
                 <button className="mini" onClick={() => onOpenAuthor(m.movement_id)}>
-                  Author / refine
+                  Studio
                 </button>
               )}
+              <MembersPanel movementId={m.movement_id} />
               <AddVariant movementId={m.movement_id} cat={cat!} busy={busy}
                 onAdd={(d) => run("variant", () => createVariant(d))} primary />
             </div>
@@ -108,6 +113,47 @@ export default function Admin(
         />
       )}
     </div>
+  );
+}
+
+// Learners enrolled in a course and how far they've come.
+function MembersPanel({ movementId }: { movementId: string }) {
+  const [open, setOpen] = useState(false);
+  const [members, setMembers] = useState<CourseMember[] | null>(null);
+  const [err, setErr] = useState(false);
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && members === null) {
+      getCourseMembers(movementId)
+        .then((r) => setMembers(r.members))
+        .catch(() => setErr(true));
+    }
+  }
+
+  return (
+    <>
+      <button className="mini" onClick={toggle}>
+        <UsersIcon /> Members{members ? ` (${members.length})` : ""}
+      </button>
+      {open && (
+        <div className="members">
+          {err && <p className="sub">Couldn’t load members.</p>}
+          {members?.length === 0 && <p className="sub">No one has unlocked this course yet.</p>}
+          {members?.map((u) => (
+            <div className="member-row" key={u.user_id}>
+              <span className="member-id">tg:{u.telegram_id ?? "?"}</span>
+              <span className="member-progress">
+                {u.attempts} attempt{u.attempts === 1 ? "" : "s"}
+                {u.best_score !== null && ` · best ${u.best_score}`}
+                {u.last_practiced && ` · ${new Date(u.last_practiced).toLocaleDateString()}`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 

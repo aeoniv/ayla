@@ -2,14 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { FeedItem, getFeed } from "../api/client";
 import MovementCard from "../components/MovementCard";
 import Wallet from "../components/Wallet";
+import { SettingsIcon, WalletIcon } from "../components/icons";
 
 interface Props {
   isOwner: boolean;
+  userId: string;
   onOpenAdmin: () => void;
   onPractice: (movementId: string, styleId: string) => void;
 }
 
-export default function Feed({ isOwner, onOpenAdmin, onPractice }: Props) {
+export default function Feed({ isOwner, userId, onOpenAdmin, onPractice }: Props) {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +48,7 @@ export default function Feed({ isOwner, onOpenAdmin, onPractice }: Props) {
   return (
     <>
       <button className="wallet-btn" onClick={() => (isOwner ? onOpenAdmin() : setWalletOpen(true))}>
-        {isOwner ? "⚙︎ Admin" : "👛"}
+        {isOwner ? <SettingsIcon /> : <WalletIcon />}
       </button>
       <div className="feed" ref={containerRef}>
         {items.map((it) => (
@@ -54,6 +56,7 @@ export default function Feed({ isOwner, onOpenAdmin, onPractice }: Props) {
             <MovementCard
               item={it}
               active={activeId === it.movement_id}
+              userId={userId}
               onPractice={onPractice}
             />
           </div>

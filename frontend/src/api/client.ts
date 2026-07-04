@@ -95,6 +95,18 @@ export interface Revenue {
 }
 export const getRevenue = () => req<Revenue>(DELIVERY, "/admin/revenue");
 
+export interface CourseMember {
+  user_id: string; telegram_id: number | null; role: string;
+  attempts: number; best_score: number | null; last_practiced: string | null;
+}
+export const getCourseMembers = (movementId: string) =>
+  req<{ movement_id: string; members: CourseMember[] }>(
+    DELIVERY, `/admin/course/${movementId}/members`,
+  );
+
+export interface ReferralSummary { earned_stars: number; referred_purchases: number }
+export const getMyReferrals = () => req<ReferralSummary>(DELIVERY, "/me/referrals");
+
 // ---- admin (Phase 7) -----------------------------------------------------
 export interface CatVariant {
   variant_id: string; avatar_name: string; style_name: string;

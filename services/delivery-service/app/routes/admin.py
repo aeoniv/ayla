@@ -97,6 +97,39 @@ def catalog(owner: SessionUser = Depends(require_owner)):
     }
 
 
+@router.get("/course/{movement_id}/members")
+def course_members(movement_id: str, owner: SessionUser = Depends(require_owner)):
+    """Everyone who unlocked this course, with their practice progress."""
+    ents = (
+        db().collection("entitlements")
+        .where("scope", "==", "movement")
+        .where("movement_id", "==", movement_id)
+        .stream()
+    )
+    user_ids = sorted({e.to_dict().get("user_id") for e in ents if e.to_dict().get("user_id")})
+    out = []
+    for uid in user_ids:
+        u = db().collection("users").document(uid).get()
+        ud = u.to_dict() or {}
+        attempts = list(
+            db().collection("attempts")
+            .where("user_id", "==", uid)
+            .where("movement_id", "==", movement_id)
+            .stream()
+        )
+        scores = [float(a.to_dict().get("score", 0)) for a in attempts]
+        ts = [a.to_dict().get("timestamp") for a in attempts if a.to_dict().get("timestamp")]
+        out.append({
+            "user_id": uid,
+            "telegram_id": ud.get("telegram_id"),
+            "role": ud.get("role", "student"),
+            "attempts": len(attempts),
+            "best_score": round(max(scores), 1) if scores else None,
+            "last_practiced": max(ts).isoformat() if ts else None,
+        })
+    return {"movement_id": movement_id, "members": out}
+
+
 @router.get("/revenue")
 async def revenue(limit: int = 25, owner: SessionUser = Depends(require_owner)):
     """Owner-only earnings readout, straight from Telegram's Stars ledger.

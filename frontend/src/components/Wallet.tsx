@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getMyPurchases, getRevenue, Purchase, Revenue } from "../api/client";
+import { getMyPurchases, getMyReferrals, getRevenue, Purchase, ReferralSummary, Revenue } from "../api/client";
 
 interface Props {
   isOwner: boolean;
@@ -11,10 +11,12 @@ interface Props {
 export default function Wallet({ isOwner, onClose }: Props) {
   const [purchases, setPurchases] = useState<Purchase[] | null>(null);
   const [revenue, setRevenue] = useState<Revenue | null>(null);
+  const [referrals, setReferrals] = useState<ReferralSummary | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     getMyPurchases().then((r) => setPurchases(r.purchases)).catch((e) => setErr(String(e)));
+    getMyReferrals().then(setReferrals).catch(() => {});
     if (isOwner) getRevenue().then(setRevenue).catch(() => {});
   }, [isOwner]);
 
@@ -43,6 +45,15 @@ export default function Wallet({ isOwner, onClose }: Props) {
             )}
           </section>
         )}
+
+        <section className="earn">
+          <h4>Earned by sharing</h4>
+          <p className="big">
+            ⭐ {referrals?.earned_stars ?? 0}
+            <span className="sub"> from {referrals?.referred_purchases ?? 0} referred purchases</span>
+          </p>
+          <p className="sub">Share a movement — you earn 10% in Stars on every purchase your invitees make.</p>
+        </section>
 
         <section>
           <h4>My unlocks</h4>

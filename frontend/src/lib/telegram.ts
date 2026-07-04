@@ -15,10 +15,17 @@ export function getInitData(): string {
   return tg()?.initData ?? "";
 }
 
-/** Native Telegram "share to…" sheet for a movement. */
-export function shareMovement(name: string): void {
+/** Native Telegram "share to…" sheet for a movement.
+ *
+ * `referrerId` rides along as ?startapp=ref_<id>: when the invited person
+ * opens the app it lands in initData.start_param and the sharer earns 10%
+ * in Stars on every purchase that new user makes.
+ */
+export function shareMovement(name: string, referrerId?: string): void {
   const w = tg();
-  const botUrl = "https://t.me/Ayla_Bot";
+  const botUrl = referrerId
+    ? `https://t.me/Ayla_Bot?startapp=ref_${referrerId}`
+    : "https://t.me/Ayla_Bot";
   const text = `Learn "${name}" on Ayla — AI-corrected movement coaching`;
   const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(botUrl)}&text=${encodeURIComponent(text)}`;
   if (w?.openTelegramLink) w.openTelegramLink(shareUrl);

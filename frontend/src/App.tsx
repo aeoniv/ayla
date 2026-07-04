@@ -17,6 +17,7 @@ const DEV_OWNER = import.meta.env.VITE_DEV_OWNER === "true";
 export default function App() {
   const [ready, setReady] = useState(DEV_OWNER);
   const [role, setRole] = useState(DEV_OWNER ? "owner" : "student");
+  const [userId, setUserId] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [view, setView] = useState<View>(DEV_OWNER ? { name: "author" } : { name: "feed" });
 
@@ -26,7 +27,7 @@ export default function App() {
     const initData = getInitData();
     if (!initData) { setAuthError("Open this app from inside Telegram."); return; }
     authTelegram(initData)
-      .then((r) => { setSessionToken(r.session_token); setRole(r.role); setReady(true); })
+      .then((r) => { setSessionToken(r.session_token); setRole(r.role); setUserId(r.user_id); setReady(true); })
       .catch((e) => setAuthError(String(e)));
   }, []);
 
@@ -61,6 +62,7 @@ export default function App() {
   return (
     <Feed
       isOwner={role === "owner"}
+      userId={userId}
       onOpenAdmin={() => setView({ name: "admin" })}
       onPractice={(movementId, styleId) => setView({ name: "practice", movementId, styleId })}
     />

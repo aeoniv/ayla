@@ -22,8 +22,12 @@ def db() -> firestore.Client:
 
 # --- users ---------------------------------------------------------------
 
-def upsert_user(telegram_id: int) -> dict:
-    """Find or create a user by telegram id. Owner role derived from env."""
+def upsert_user(telegram_id: int, referred_by: str | None = None) -> dict:
+    """Find or create a user by telegram id. Owner role derived from env.
+
+    `referred_by` (a referrer's user doc id from a share link) is recorded on
+    FIRST auth only — an existing user can never be claimed retroactively.
+    """
     s = get_settings()
     users = db().collection("users")
     hits = list(users.where("telegram_id", "==", telegram_id).limit(1).stream())
@@ -42,11 +46,39 @@ def upsert_user(telegram_id: int) -> dict:
     data = {
         "telegram_id": telegram_id,
         "role": role,
+        "referred_by": referred_by,
         "created_at": firestore.SERVER_TIMESTAMP,
     }
     ref.set(data)
     data["id"] = ref.id
     return data
+
+
+# --- referral earnings ----------------------------------------------------
+
+def credit_referral(charge_id: str, referrer_id: str, amount_stars: int, buyer_id: str) -> bool:
+    """Idempotently credit a share-referral bonus, keyed on the charge id."""
+    ref = db().collection("referral_earnings").document(charge_id)
+    if ref.get().exists:
+        return False
+    ref.set({
+        "referrer_id": referrer_id,
+        "buyer_id": buyer_id,
+        "amount_stars": amount_stars,
+        "charge_id": charge_id,
+        "created_at": firestore.SERVER_TIMESTAMP,
+    })
+    return True
+
+
+def referral_summary(user_id: str) -> dict:
+    """Total stars earned from shares + how many purchases they drove."""
+    q = db().collection("referral_earnings").where("referrer_id", "==", user_id).stream()
+    total, count = 0, 0
+    for d in q:
+        total += int(d.to_dict().get("amount_stars", 0))
+        count += 1
+    return {"earned_stars": total, "referred_purchases": count}
 
 
 # --- entitlements --------------------------------------------------------

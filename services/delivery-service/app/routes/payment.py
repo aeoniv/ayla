@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..config import get_settings
 from ..deps import SessionUser, current_user
-from ..firestore import db, grant_entitlement
+from ..firestore import credit_referral, db, grant_entitlement
 from ..models import InvoiceRequest, InvoiceResponse
 
 router = APIRouter(prefix="/payment", tags=["payment"])
@@ -165,4 +165,14 @@ async def payment_webhook(request: Request):
         subscription_tier=payload.get("subscription_tier") if scope == "subscription" else None,
         subscription_expires_at=expires_at,
     )
+
+    # 5) Share-to-earn: if the buyer arrived via a share link, credit the
+    # referrer 10% of the purchase (min 1⭐). Idempotent on the same charge id.
+    if created:
+        buyer = db().collection("users").document(user_id).get()
+        referrer = (buyer.to_dict() or {}).get("referred_by") if buyer.exists else None
+        if referrer and referrer != user_id:
+            bonus = max(1, int(sp.get("total_amount", 0)) // 10)
+            credit_referral(charge_id, referrer, bonus, user_id)
+
     return {"ok": True, "granted": created, "charge_id": charge_id}
