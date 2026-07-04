@@ -104,6 +104,23 @@ export const getCourseMembers = (movementId: string) =>
     DELIVERY, `/admin/course/${movementId}/members`,
   );
 
+export interface AdminUser {
+  user_id: string; telegram_id: number | null; role: string; referred_by: string | null;
+  joined: string | null; unlocks: number; guidance_skips: number; attempts: number;
+  best_score: number | null; last_active: string | null; referral_stars: number;
+}
+export const getAdminUsers = () =>
+  req<{ count: number; users: AdminUser[] }>(DELIVERY, "/admin/users");
+
+export interface AdminUserDetail {
+  user_id: string; telegram_id: number | null; role: string; referred_by: string | null;
+  joined: string | null;
+  unlocks: { scope: string; movement_id: string | null; movement_name: string | null; variant_id: string | null; granted_at: string | null }[];
+  progress: { movement_id: string; movement_name: string; attempts: number; best_score: number; last: string | null }[];
+}
+export const getAdminUserDetail = (userId: string) =>
+  req<AdminUserDetail>(DELIVERY, `/admin/user/${userId}`);
+
 export interface ReferralSummary { earned_stars: number; referred_purchases: number }
 export const getMyReferrals = () => req<ReferralSummary>(DELIVERY, "/me/referrals");
 

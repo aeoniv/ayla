@@ -1,25 +1,33 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  Catalog, CourseMember, createAvatar, createMovement, createStyle, createVariant,
-  getCatalog, getCourseMembers, getRevenue, Revenue,
+  AdminUser, AdminUserDetail, Catalog, CourseMember, createAvatar, createMovement,
+  createStyle, createVariant, getAdminUserDetail, getAdminUsers, getCatalog,
+  getCourseMembers, getRevenue, Revenue,
 } from "../api/client";
-import { BackIcon, EyeIcon, TargetIcon, UnlockIcon, UsersIcon } from "../components/icons";
+import {
+  BackIcon, EyeIcon, TargetIcon, UnlockIcon, UsersIcon,
+} from "../components/icons";
 
-// Phase 7 — owner-only content + earnings management.
+type Tab = "overview" | "studio" | "users";
+
+// Owner dashboard: Overview (KPIs + earnings) / Studio (content) / Users.
 export default function Admin(
   { onExit, onOpenAuthor }: {
     onExit: () => void;
     onOpenAuthor?: (movementId?: string) => void;
   },
 ) {
+  const [tab, setTab] = useState<Tab>("overview");
   const [cat, setCat] = useState<Catalog | null>(null);
   const [rev, setRev] = useState<Revenue | null>(null);
+  const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   const refresh = () => {
     getCatalog().then(setCat).catch((e) => setMsg("catalog: " + e));
     getRevenue().then(setRev).catch(() => {});
+    getAdminUsers().then((r) => setUsers(r.users)).catch(() => {});
   };
   useEffect(refresh, []);
 
@@ -31,90 +39,275 @@ export default function Admin(
   }
 
   return (
-    <div className="admin">
+    <div className="admin pro">
       <div className="admin-top">
         <button className="exit" onClick={onExit}><BackIcon /></button>
-        <h2>Courses</h2>
-        {onOpenAuthor && (
-          <button className="admin-author-btn" onClick={() => onOpenAuthor()}>Studio</button>
-        )}
+        <h2>Dashboard</h2>
       </div>
 
-      {/* Earnings */}
-      <section className="earn">
-        <h4>Earnings (Telegram Stars) ✦</h4>
-        <p className="big">⭐ {rev?.balance_stars ?? 0}<span className="sub"> balance</span></p>
-        <p className="sub">
-          Est. from sales: ⭐{cat?.total_est_stars ?? 0} · Withdraw via Fragment (TON).
-        </p>
-        <p className="sub" style={{ color: "#ffd23f", fontSize: 11 }}>
-          Last refreshed: {new Date().toLocaleTimeString()}
-        </p>
-      </section>
+      <nav className="admin-tabs">
+        {(["overview", "studio", "users"] as Tab[]).map((t) => (
+          <button key={t} className={tab === t ? "atab on" : "atab"} onClick={() => setTab(t)}>
+            {t === "overview" ? "Overview" : t === "studio" ? "Studio" : "Users"}
+          </button>
+        ))}
+      </nav>
 
       {msg && <p className="admin-msg">{msg}</p>}
 
-      {/* Courses: per course — Studio (authoring) + Members (learner progress) */}
-      <section>
-        <h4>Courses ({cat?.movements.length ?? 0})</h4>
-        {cat?.movements.map((m) => (
-          <div className="mv" key={m.movement_id}>
-            <div className="mv-head">
-              <b>{m.name}</b><span className="tag">{m.style_name} · ⭐{m.price_stars}</span>
-            </div>
-            <div className="stat">
-              <span className="stat-i"><EyeIcon /> {m.views}</span>
-              <span className="stat-i"><TargetIcon /> {m.attempts}</span>
-              <span className="stat-i"><UnlockIcon /> {m.unlocks}</span>
-              <span className="stat-i">⭐{m.est_stars}</span>
-            </div>
-            {m.variants.map((v) => (
-              <div className="var" key={v.variant_id}>
-                ↳ {v.avatar_name} · ⭐{v.price_stars} · 🔓{v.unlocks} · ⭐{v.est_stars}
-              </div>
-            ))}
-            <div className="mv-actions">
-              {onOpenAuthor && (
-                <button className="mini" onClick={() => onOpenAuthor(m.movement_id)}>
-                  Studio
-                </button>
-              )}
-              <MembersPanel movementId={m.movement_id} />
-              <AddVariant movementId={m.movement_id} cat={cat!} busy={busy}
-                onAdd={(d) => run("variant", () => createVariant(d))} primary />
-            </div>
-          </div>
-        ))}
+      {tab === "overview" && <OverviewTab cat={cat} rev={rev} users={users} onOpenAuthor={onOpenAuthor} />}
+      {tab === "studio" && (
+        <StudioTab
+          cat={cat} busy={busy} onOpenAuthor={onOpenAuthor} run={run}
+          setBusy={setBusy} setMsg={setMsg} refresh={refresh}
+        />
+      )}
+      {tab === "users" && <UsersTab users={users} />}
+    </div>
+  );
+}
+
+// --- Overview ---------------------------------------------------------------
+
+function OverviewTab(
+  { cat, rev, users, onOpenAuthor }: {
+    cat: Catalog | null; rev: Revenue | null; users: AdminUser[] | null;
+    onOpenAuthor?: (movementId?: string) => void;
+  },
+) {
+  const k = useMemo(() => {
+    const mvs = cat?.movements ?? [];
+    return {
+      courses: mvs.length,
+      views: mvs.reduce((s, m) => s + m.views, 0),
+      attempts: mvs.reduce((s, m) => s + m.attempts, 0),
+      unlocks: mvs.reduce((s, m) => s + m.unlocks, 0),
+      pending: mvs.filter((m) => m.reference_status === "pending"),
+      activeUsers: (users ?? []).filter((u) => u.attempts > 0).length,
+    };
+  }, [cat, users]);
+
+  return (
+    <>
+      <section className="earn card-panel">
+        <h4>Earnings</h4>
+        <p className="big">⭐ {rev?.balance_stars ?? 0}<span className="sub"> withdrawable balance</span></p>
+        <p className="sub">Est. from sales: ⭐{cat?.total_est_stars ?? 0} · withdraw via Fragment (TON)</p>
       </section>
 
-      {/* Create style */}
-      <NewStyle busy={busy} onAdd={(name) => run("style", () => createStyle(name))} />
-      {/* Create avatar */}
-      {cat && <NewAvatar cat={cat} busy={busy}
-        onAdd={(name, styleId) => run("avatar", () => createAvatar(name, styleId))} />}
-      {/* Create movement — supports both manual timestamps and studio authoring */}
-      {cat && (
-        <NewMovement
-          cat={cat}
-          busy={busy}
-          onAdd={async (d) => {
-            setBusy(true); setMsg(null);
-            try {
-              const result = await createMovement(d);
-              setMsg(`movement created ✓ (${result.reference_status === "pending"
-                ? "open Studio to author checkpoints"
-                : `${result.checkpoint_count} checkpoints auto-extracted`})`);
-              refresh();
-              if (result.reference_status === "pending" && onOpenAuthor)
-                onOpenAuthor(result.movement_id);
-            } catch (e) { setMsg("movement failed: " + e); }
-            finally { setBusy(false); }
-          }}
-        />
+      <section className="kpi-grid">
+        <Kpi label="Courses" value={k.courses} />
+        <Kpi label="Learners" value={users?.length ?? "—"} />
+        <Kpi label="Active" value={k.activeUsers} />
+        <Kpi label="Views" value={k.views} />
+        <Kpi label="Attempts" value={k.attempts} />
+        <Kpi label="Unlocks" value={k.unlocks} />
+      </section>
+
+      {k.pending.length > 0 && (
+        <section className="card-panel warn">
+          <h4>Needs authoring</h4>
+          {k.pending.map((m) => (
+            <div className="row" key={m.movement_id}>
+              <span>{m.name}</span>
+              {onOpenAuthor && (
+                <button className="mini" onClick={() => onOpenAuthor(m.movement_id)}>Open Studio</button>
+              )}
+            </div>
+          ))}
+        </section>
+      )}
+    </>
+  );
+}
+
+function Kpi({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="kpi">
+      <span className="kpi-v">{value}</span>
+      <span className="kpi-l">{label}</span>
+    </div>
+  );
+}
+
+// --- Studio (content management) ---------------------------------------------
+
+function StudioTab(
+  { cat, busy, onOpenAuthor, run, setBusy, setMsg, refresh }: {
+    cat: Catalog | null; busy: boolean;
+    onOpenAuthor?: (movementId?: string) => void;
+    run: (label: string, fn: () => Promise<unknown>) => Promise<void>;
+    setBusy: (b: boolean) => void; setMsg: (m: string | null) => void; refresh: () => void;
+  },
+) {
+  const [creating, setCreating] = useState(false);
+
+  return (
+    <>
+      <div className="studio-head">
+        <h4>Courses ({cat?.movements.length ?? 0})</h4>
+        <button className="mini accent" onClick={() => setCreating((c) => !c)}>
+          {creating ? "Close" : "＋ New course"}
+        </button>
+      </div>
+
+      {creating && cat && (
+        <div className="create-stack">
+          <NewMovement
+            cat={cat}
+            busy={busy}
+            onAdd={async (d) => {
+              setBusy(true); setMsg(null);
+              try {
+                const result = await createMovement(d);
+                setMsg(`movement created ✓ (${result.reference_status === "pending"
+                  ? "open Studio to author checkpoints"
+                  : `${result.checkpoint_count} checkpoints auto-extracted`})`);
+                refresh(); setCreating(false);
+                if (result.reference_status === "pending" && onOpenAuthor)
+                  onOpenAuthor(result.movement_id);
+              } catch (e) { setMsg("movement failed: " + e); }
+              finally { setBusy(false); }
+            }}
+          />
+          <NewStyle busy={busy} onAdd={(name) => run("style", () => createStyle(name))} />
+          <NewAvatar cat={cat} busy={busy}
+            onAdd={(name, styleId) => run("avatar", () => createAvatar(name, styleId))} />
+        </div>
+      )}
+
+      {cat?.movements.map((m) => (
+        <div className="mv card-panel" key={m.movement_id}>
+          <div className="mv-head">
+            <b>{m.name}</b>
+            <span className="tag">{m.style_name} · ⭐{m.price_stars}</span>
+            {m.reference_status === "pending" && <span className="tag pending">unauthored</span>}
+          </div>
+          <div className="stat">
+            <span className="stat-i"><EyeIcon /> {m.views}</span>
+            <span className="stat-i"><TargetIcon /> {m.attempts}</span>
+            <span className="stat-i"><UnlockIcon /> {m.unlocks}</span>
+            <span className="stat-i">⭐{m.est_stars}</span>
+          </div>
+          {m.variants.map((v) => (
+            <div className="var" key={v.variant_id}>
+              ↳ {v.avatar_name} · ⭐{v.price_stars} · 🔓{v.unlocks} · ⭐{v.est_stars}
+            </div>
+          ))}
+          <div className="mv-actions">
+            {onOpenAuthor && (
+              <button className="mini" onClick={() => onOpenAuthor(m.movement_id)}>Studio</button>
+            )}
+            <MembersPanel movementId={m.movement_id} />
+            <AddVariant movementId={m.movement_id} cat={cat!} busy={busy}
+              onAdd={(d) => run("variant", () => createVariant(d))} primary />
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+// --- Users -------------------------------------------------------------------
+
+function UsersTab({ users }: { users: AdminUser[] | null }) {
+  const [q, setQ] = useState("");
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  const filtered = useMemo(() => {
+    if (!users) return null;
+    const needle = q.trim().toLowerCase();
+    if (!needle) return users;
+    return users.filter((u) =>
+      String(u.telegram_id ?? "").includes(needle) ||
+      u.user_id.toLowerCase().includes(needle) ||
+      u.role.includes(needle));
+  }, [users, q]);
+
+  return (
+    <>
+      <input
+        className="user-search"
+        placeholder="Search by telegram id, user id, role…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
+      {!filtered && <p className="sub">Loading users…</p>}
+      {filtered?.length === 0 && <p className="sub">No users match.</p>}
+      {filtered?.map((u) => (
+        <UserRow key={u.user_id} u={u}
+          open={openId === u.user_id}
+          onToggle={() => setOpenId(openId === u.user_id ? null : u.user_id)} />
+      ))}
+    </>
+  );
+}
+
+function UserRow({ u, open, onToggle }: { u: AdminUser; open: boolean; onToggle: () => void }) {
+  const [detail, setDetail] = useState<AdminUserDetail | null>(null);
+  const [err, setErr] = useState(false);
+
+  useEffect(() => {
+    if (open && !detail && !err) {
+      getAdminUserDetail(u.user_id).then(setDetail).catch(() => setErr(true));
+    }
+  }, [open, detail, err, u.user_id]);
+
+  return (
+    <div className={open ? "user-card open" : "user-card"}>
+      <button className="user-summary" onClick={onToggle}>
+        <span className="user-ident">
+          <UsersIcon />
+          <b>tg:{u.telegram_id ?? "?"}</b>
+          {u.role !== "student" && <span className="tag">{u.role}</span>}
+          {u.referred_by && <span className="tag ref">referred</span>}
+        </span>
+        <span className="user-nums">
+          <span title="unlocks"><UnlockIcon /> {u.unlocks}</span>
+          <span title="attempts"><TargetIcon /> {u.attempts}</span>
+          {u.referral_stars > 0 && <span title="earned by sharing">⭐{u.referral_stars}</span>}
+        </span>
+      </button>
+      <div className="user-meta">
+        {u.joined && <span>joined {new Date(u.joined).toLocaleDateString()}</span>}
+        {u.last_active && <span>· active {new Date(u.last_active).toLocaleDateString()}</span>}
+        {u.best_score !== null && <span>· best {u.best_score}</span>}
+      </div>
+
+      {open && (
+        <div className="user-detail">
+          {err && <p className="sub">Couldn’t load detail.</p>}
+          {!detail && !err && <p className="sub">Loading…</p>}
+          {detail && (
+            <>
+              <h5>Progress</h5>
+              {detail.progress.length === 0 && <p className="sub">No practice yet.</p>}
+              {detail.progress.map((p) => (
+                <div className="row" key={p.movement_id}>
+                  <span>{p.movement_name}</span>
+                  <span className="sub">
+                    {p.attempts}× · best {p.best_score}
+                    {p.last && ` · ${new Date(p.last).toLocaleDateString()}`}
+                  </span>
+                </div>
+              ))}
+              <h5>Unlocks</h5>
+              {detail.unlocks.length === 0 && <p className="sub">Nothing purchased.</p>}
+              {detail.unlocks.map((e, i) => (
+                <div className="row" key={i}>
+                  <span>{e.movement_name ?? e.variant_id ?? e.movement_id ?? "—"}</span>
+                  <span className="tag">{e.scope}</span>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
       )}
     </div>
   );
 }
+
+// --- shared course sub-components ---------------------------------------------
 
 // Learners enrolled in a course and how far they've come.
 function MembersPanel({ movementId }: { movementId: string }) {
@@ -217,7 +410,7 @@ function NewMovement(
 
   return (
     <section className="form">
-      <h4>New movement</h4>
+      <h4>New course</h4>
       <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
       <input placeholder="Short description" value={description} onChange={(e) => setDescription(e.target.value)} />
       <select value={style} onChange={(e) => setStyle(e.target.value)}>

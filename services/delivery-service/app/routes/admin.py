@@ -130,6 +130,127 @@ def course_members(movement_id: str, owner: SessionUser = Depends(require_owner)
     return {"movement_id": movement_id, "members": out}
 
 
+@router.get("/users")
+def users_overview(owner: SessionUser = Depends(require_owner)):
+    """Directory of every user with engagement + monetization aggregates.
+
+    One stream per collection (users/entitlements/attempts/referral_earnings),
+    joined in memory — fine at this scale, revisit past ~10k users.
+    """
+    ents_by_user: dict[str, int] = {}
+    skips_by_user: dict[str, int] = {}
+    for d in db().collection("entitlements").stream():
+        e = d.to_dict()
+        uid = e.get("user_id")
+        if not uid:
+            continue
+        if e.get("scope") == "skip_guidance":
+            skips_by_user[uid] = skips_by_user.get(uid, 0) + 1
+        else:
+            ents_by_user[uid] = ents_by_user.get(uid, 0) + 1
+
+    att_count: dict[str, int] = {}
+    att_best: dict[str, float] = {}
+    att_last: dict[str, object] = {}
+    for d in db().collection("attempts").stream():
+        e = d.to_dict()
+        uid = e.get("user_id")
+        if not uid:
+            continue
+        att_count[uid] = att_count.get(uid, 0) + 1
+        sc = float(e.get("score", 0))
+        if sc > att_best.get(uid, -1):
+            att_best[uid] = sc
+        ts = e.get("timestamp")
+        if ts is not None and (uid not in att_last or ts > att_last[uid]):
+            att_last[uid] = ts
+
+    ref_earned: dict[str, int] = {}
+    for d in db().collection("referral_earnings").stream():
+        e = d.to_dict()
+        rid = e.get("referrer_id")
+        if rid:
+            ref_earned[rid] = ref_earned.get(rid, 0) + int(e.get("amount_stars", 0))
+
+    out = []
+    for d in db().collection("users").stream():
+        u = d.to_dict()
+        uid = d.id
+        created = u.get("created_at")
+        last = att_last.get(uid)
+        out.append({
+            "user_id": uid,
+            "telegram_id": u.get("telegram_id"),
+            "role": u.get("role", "student"),
+            "referred_by": u.get("referred_by"),
+            "joined": created.isoformat() if created else None,
+            "unlocks": ents_by_user.get(uid, 0),
+            "guidance_skips": skips_by_user.get(uid, 0),
+            "attempts": att_count.get(uid, 0),
+            "best_score": round(att_best[uid], 1) if uid in att_best else None,
+            "last_active": last.isoformat() if last is not None else None,
+            "referral_stars": ref_earned.get(uid, 0),
+        })
+    # Most recently active first, then newest.
+    out.sort(key=lambda x: (x["last_active"] or "", x["joined"] or ""), reverse=True)
+    return {"count": len(out), "users": out}
+
+
+@router.get("/user/{user_id}")
+def user_detail(user_id: str, owner: SessionUser = Depends(require_owner)):
+    """One user's unlocks and per-course practice progress."""
+    u = db().collection("users").document(user_id).get()
+    if not u.exists:
+        raise HTTPException(404, "user not found")
+    ud = u.to_dict()
+
+    mv_names = {d.id: d.to_dict().get("name", "") for d in db().collection("movements").stream()}
+
+    unlocks = []
+    for d in db().collection("entitlements").where("user_id", "==", user_id).stream():
+        e = d.to_dict()
+        g = e.get("granted_at")
+        unlocks.append({
+            "scope": e.get("scope"),
+            "movement_id": e.get("movement_id"),
+            "movement_name": mv_names.get(e.get("movement_id"), None),
+            "variant_id": e.get("variant_id"),
+            "granted_at": g.isoformat() if g else None,
+        })
+    unlocks.sort(key=lambda x: x["granted_at"] or "", reverse=True)
+
+    prog: dict[str, dict] = {}
+    for d in db().collection("attempts").where("user_id", "==", user_id).stream():
+        e = d.to_dict()
+        mid = e.get("movement_id")
+        if not mid:
+            continue
+        p = prog.setdefault(mid, {"movement_id": mid, "movement_name": mv_names.get(mid, mid),
+                                  "attempts": 0, "best_score": 0.0, "last": None})
+        p["attempts"] += 1
+        p["best_score"] = max(p["best_score"], float(e.get("score", 0)))
+        ts = e.get("timestamp")
+        if ts is not None and (p["last"] is None or ts > p["last"]):
+            p["last"] = ts
+    progress = []
+    for p in prog.values():
+        p["best_score"] = round(p["best_score"], 1)
+        p["last"] = p["last"].isoformat() if p["last"] is not None else None
+        progress.append(p)
+    progress.sort(key=lambda x: x["last"] or "", reverse=True)
+
+    created = ud.get("created_at")
+    return {
+        "user_id": user_id,
+        "telegram_id": ud.get("telegram_id"),
+        "role": ud.get("role", "student"),
+        "referred_by": ud.get("referred_by"),
+        "joined": created.isoformat() if created else None,
+        "unlocks": unlocks,
+        "progress": progress,
+    }
+
+
 @router.get("/revenue")
 async def revenue(limit: int = 25, owner: SessionUser = Depends(require_owner)):
     """Owner-only earnings readout, straight from Telegram's Stars ledger.
