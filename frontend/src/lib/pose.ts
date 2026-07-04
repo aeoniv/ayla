@@ -10,17 +10,24 @@ export async function initPose(): Promise<void> {
   const fileset = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm",
   );
-  landmarker = await PoseLandmarker.createFromOptions(fileset, {
+  const opts = (delegate: "GPU" | "CPU") => ({
     baseOptions: {
       modelAssetPath:
         "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+      delegate,
     },
-    runningMode: "IMAGE",         // per-frame; avoids VIDEO-mode timestamp pitfalls
+    runningMode: "IMAGE" as const, // per-frame; avoids VIDEO-mode timestamp pitfalls
     numPoses: 1,
     minPoseDetectionConfidence: 0.3,
     minPosePresenceConfidence: 0.3,
     minTrackingConfidence: 0.3,
   });
+  // GPU is far cheaper on low-end phones; fall back to CPU where WebGL fails.
+  try {
+    landmarker = await PoseLandmarker.createFromOptions(fileset, opts("GPU"));
+  } catch {
+    landmarker = await PoseLandmarker.createFromOptions(fileset, opts("CPU"));
+  }
 }
 
 /**

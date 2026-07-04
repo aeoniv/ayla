@@ -35,6 +35,7 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
   const phaseRef = useRef<Phase>("loading");
   const currentRef = useRef(0);
   const lastScoreT = useRef(0);
+  const lastDetT = useRef(0);
   const scoring = useRef(false);
   const poseReady = useRef(false);
   const camOk = useRef(false);
@@ -109,15 +110,22 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
         }
 
         // 2) The student's live skeleton, snapped onto the avatar's body anchor.
+        // Inference is throttled to ~10 fps — low-end phones lock up if we run
+        // the detector on every animation frame, and the checkpoint gate only
+        // samples every 350ms anyway. Drawing still happens every frame from
+        // the latest landmarks.
         if (poseReady.current && camOk.current && cam && cam.videoWidth > 0) {
-          let lm: number[][] | null = null;
-          try { lm = detect(cam, t); } catch { /* detector hiccup */ }
-          if (lm) {
+          if (t - lastDetT.current > 99) {
+            lastDetT.current = t;
+            let lm: number[][] | null = null;
+            try { lm = detect(cam, t); } catch { /* detector hiccup */ }
             // Selfie mirror applied ONCE: same vector drives the drawing, the
             // real-time gate, and the final attempt — so what the user sees and
             // what we score can never disagree.
-            const view = mirrorPose(lm);
-            latestLm.current = view;
+            if (lm) latestLm.current = mirrorPose(lm);
+          }
+          const view = latestLm.current;
+          if (view) {
             const camA = cam.videoWidth ? cam.videoWidth / cam.videoHeight : undefined;
             drawSkeleton(cv, view, {
               regionScores: gating ? regionScores.current : undefined, srcAspect: camA,
@@ -155,7 +163,11 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
   async function begin() {
     try { await refVideo.current?.play(); } catch { /* keep going */ }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+      // Modest resolution/fps: the detector only needs ~256px input, and big
+      // frames are what stall low-end phones.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
+      });
       if (camVideo.current) { camVideo.current.srcObject = stream; await camVideo.current.play().catch(() => {}); }
       camOk.current = true;
     } catch { camOk.current = false; }
