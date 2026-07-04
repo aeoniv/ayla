@@ -4,7 +4,7 @@ import {
   getFullVideo, getReference, matchCheckpoint, submitAttempt,
 } from "../api/client";
 import { openInvoice } from "../lib/telegram";
-import { CameraIcon, PlayIcon } from "../components/icons";
+import { CameraIcon, EyeIcon, PlayIcon, TargetIcon } from "../components/icons";
 import { Anchor, detect, drawSkeleton, initPose, mirrorPose, skeletonAnchor } from "../lib/pose";
 
 interface Props {
@@ -23,12 +23,14 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
   const [coach, setCoach] = useState<CoachResult | null>(null);
   const [error, setError] = useState("");
   const [align, setAlign] = useState(true);
+  const [ghost, setGhost] = useState(true);
   const [difficulty, setDifficulty] = useState(70);
   const [guided, setGuided] = useState(true);
   const [skipOwned, setSkipOwned] = useState(false);
   const [skipPrice, setSkipPrice] = useState(0);
 
   const alignRef = useRef(true);
+  const ghostRef = useRef(true);
   const thresholdRef = useRef(70);
   const refVideo = useRef<HTMLVideoElement>(null);
   const camVideo = useRef<HTMLVideoElement>(null);
@@ -49,6 +51,7 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { currentRef.current = current; }, [current]);
   useEffect(() => { alignRef.current = align; }, [align]);
+  useEffect(() => { ghostRef.current = ghost; }, [ghost]);
   useEffect(() => { thresholdRef.current = difficulty; }, [difficulty]);
 
   const advance = useCallback(() => {
@@ -112,7 +115,10 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
         const tgt = targetLm.current[currentRef.current];
         const avA = av && av.videoWidth ? av.videoWidth / av.videoHeight : undefined;
         if (gating && tgt && tgt.length >= 33) {
-          drawSkeleton(cv, tgt, { fit: "cover", srcAspect: avA, ghost: true, clear: false });
+          // Anchor is always computed (alignment needs it); the ghost drawing
+          // itself is a user toggle.
+          if (ghostRef.current)
+            drawSkeleton(cv, tgt, { fit: "cover", srcAspect: avA, ghost: true, clear: false });
           anchor = skeletonAnchor(cv, tgt, { fit: "cover", srcAspect: avA });
         }
 
@@ -245,17 +251,35 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
 
       {guided && (phase === "playing" || phase === "gating") && (
         <>
-          <div className="practice-controls">
-            <button className={align ? "ctl on" : "ctl"} onClick={() => setAlign((a) => !a)}>
-              {align ? "◉ Aligned" : "○ Free"}
+          <div className="checkpoint-pill">
+            {checkpoints.map((_, i) => (
+              <span key={i} className={i < current ? "dot done" : i === current ? "dot now" : "dot"} />
+            ))}
+            <span className="cp-num">{current + 1}/{checkpoints.length}</span>
+          </div>
+          <div className="control-dock">
+            <button
+              className={ghost ? "dock-btn on" : "dock-btn"}
+              onClick={() => setGhost((g) => !g)}
+              aria-label="Toggle ghost skeleton"
+            >
+              <EyeIcon size={18} />
+              <small>Ghost</small>
+            </button>
+            <button
+              className={align ? "dock-btn on" : "dock-btn"}
+              onClick={() => setAlign((a) => !a)}
+              aria-label="Toggle skeleton alignment"
+            >
+              <TargetIcon size={18} />
+              <small>Align</small>
             </button>
             <label className="difficulty">
-              <span>Easy</span>
+              <small>Easy</small>
               <input type="range" min={45} max={92} value={difficulty} onChange={(e) => setDifficulty(+e.target.value)} />
-              <span>Hard</span>
+              <small>Hard</small>
             </label>
           </div>
-          <div className="checkpoint-pill">◍ {current + 1} / {checkpoints.length}</div>
         </>
       )}
 

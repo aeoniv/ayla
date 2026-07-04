@@ -16,7 +16,9 @@ export async function initPose(): Promise<void> {
         "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
       delegate,
     },
-    runningMode: "IMAGE" as const, // per-frame; avoids VIDEO-mode timestamp pitfalls
+    // VIDEO mode tracks the pose between frames instead of running a full
+    // detection every time — much cheaper on low-end phones than IMAGE mode.
+    runningMode: "VIDEO" as const,
     numPoses: 1,
     minPoseDetectionConfidence: 0.3,
     minPosePresenceConfidence: 0.3,
@@ -34,9 +36,13 @@ export async function initPose(): Promise<void> {
  * Extract a single 33x4 landmark frame [x, y, z, visibility] from a video
  * element at the current time. Returns null if no pose is detected.
  */
-export function detect(video: HTMLVideoElement, _timestampMs: number): number[][] | null {
+let lastTs = -1;
+export function detect(video: HTMLVideoElement, timestampMs: number): number[][] | null {
   if (!landmarker) return null;
-  const res = landmarker.detect(video);   // IMAGE mode
+  // VIDEO mode requires strictly increasing timestamps.
+  const ts = Math.max(Math.floor(timestampMs), lastTs + 1);
+  lastTs = ts;
+  const res = landmarker.detectForVideo(video, ts);
   const lms = res.landmarks?.[0];
   if (!lms || lms.length < 33) return null;
   return lms.map((l) => [l.x, l.y, l.z, l.visibility ?? 1]);
