@@ -249,22 +249,30 @@ export function drawSkeleton(
     return scoreColor(s, 0.9);                                  // gradient fallback
   };
 
+  // Low visibility fades a joint/bone instead of hiding it outright — scoring
+  // (see _weighted_mean in pose.py) never refuses a low-visibility pose either,
+  // it just weights it down, so drawing shouldn't be stricter than the gate.
+  const MIN_ALPHA = 0.15;
+  const visAlpha = (v: number | undefined): number =>
+    Math.max(MIN_ALPHA, Math.min(1, v ?? 1));
+
   ctx.lineWidth = opts.ghost ? Math.max(3, w * 0.007) : Math.max(4, w * 0.008);
   ctx.lineCap = "round";
   for (const [a, b] of POSE_CONNECTIONS) {
-    if ((landmarks[a][3] ?? 1) < 0.3 || (landmarks[b][3] ?? 1) < 0.3) continue;
     const s = opts.regionScores ? Math.min(regScore(a) ?? 100, regScore(b) ?? 100) : undefined;
     const matched = th !== undefined && s !== undefined && s >= th;
     ctx.strokeStyle = boneColor(s);
     ctx.shadowColor = opts.ghost ? "#5ac8ff" : (matched ? "#2ecc71" : "transparent");
     ctx.shadowBlur = opts.ghost ? 8 : (matched ? 14 : 0);
+    ctx.globalAlpha = Math.min(visAlpha(landmarks[a][3]), visAlpha(landmarks[b][3]));
     ctx.beginPath(); ctx.moveTo(pts[a][0], pts[a][1]); ctx.lineTo(pts[b][0], pts[b][1]); ctx.stroke();
   }
   ctx.shadowBlur = 0;
   const r = Math.max(4, w * 0.009);
   for (let i = 0; i < landmarks.length; i++) {
-    if ((landmarks[i][3] ?? 1) < 0.3) continue;
     ctx.fillStyle = boneColor(opts.regionScores ? regScore(i) : undefined);
+    ctx.globalAlpha = visAlpha(landmarks[i][3]);
     ctx.beginPath(); ctx.arc(pts[i][0], pts[i][1], r, 0, Math.PI * 2); ctx.fill();
   }
+  ctx.globalAlpha = 1;
 }
