@@ -138,6 +138,10 @@ def _as_landmarks(frame, name: str = "pose") -> np.ndarray:
             f"{name} must be {NUM_LANDMARKS} MediaPipe landmarks of >=3 values, "
             f"got shape {arr.shape}"
         )
+    if not np.all(np.isfinite(arr)):
+        # A NaN/inf coordinate would otherwise flow through _dist_to_score's
+        # min/max clamp and resolve to a perfect 100 score instead of erroring.
+        raise ValueError(f"{name} contains non-finite coordinates")
     return arr
 
 
@@ -302,7 +306,7 @@ def compare_pose(ref_landmarks: list, att_landmarks: list, threshold: float = 75
 def validate_pose(
     ref_landmarks: list,
     att_landmarks: list,
-    difficulty: str | None = DEFAULT_DIFFICULTY,
+    difficulty: str | None = None,
     override: float | None = None,
     authored: float | None = None,
 ) -> dict:

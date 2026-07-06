@@ -111,8 +111,11 @@ def score_checkpoint(body: CheckpointMatch, user: SessionUser = Depends(current_
     # validate_pose enforces the gate: the user's difficulty slider (override)
     # wins, else the authored per-checkpoint tolerance. It clamps and applies the
     # sub-threshold penalty in one place.
-    return validate_pose(cp["landmarks"], body.landmarks,
-                         override=body.threshold, authored=authored)
+    try:
+        return validate_pose(cp["landmarks"], body.landmarks,
+                             override=body.threshold, authored=authored)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
 
 
 # --- manual authoring: store author-audited reference ------------------------
@@ -207,10 +210,13 @@ def score_attempt(body: AttemptSubmit, user: SessionUser = Depends(current_user)
         cp = checkpoints[p.index]
         # The authoritative re-score enforces the same authored per-checkpoint
         # gate the client was held to.
-        r = validate_pose(
-            cp["landmarks"], p.landmarks,
-            authored=float(cp.get("tolerance", _TOL_DEFAULT)),
-        )
+        try:
+            r = validate_pose(
+                cp["landmarks"], p.landmarks,
+                authored=float(cp.get("tolerance", _TOL_DEFAULT)),
+            )
+        except ValueError:
+            continue
         # Aggregate the penalized effective score: checkpoints that missed the
         # gate drag the run down instead of counting as-is.
         scores.append(r["effective_score"])

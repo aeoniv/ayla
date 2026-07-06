@@ -107,6 +107,16 @@ def test_difficulty_gate_and_penalty():
     assert easy["effective_score"] >= hard["effective_score"]
 
 
+def test_validate_pose_falls_back_to_authored_tolerance():
+    # The authoritative re-score (services/routes/score.py score_attempt) calls
+    # validate_pose with only `authored=` set, relying on it NOT defaulting to
+    # the "medium" difficulty gate — regression test for that priority order.
+    ref = _base_pose()
+    live = _transform(ref, 1.0, 0.0, 0.0)
+    r = validate_pose(ref, live, authored=62.0)
+    assert r["threshold"] == 62.0
+
+
 def test_perfect_pose_passes_hardest():
     ref = _base_pose()
     live = _transform(ref, 1.3, 0.1, -0.05)
@@ -137,6 +147,14 @@ def test_rejects_ragged():
     ragged[5] = [0.1]  # ragged row
     with pytest.raises(ValueError):
         compare_pose(ref, ragged)
+
+
+def test_rejects_non_finite_landmarks():
+    ref = _base_pose()
+    nan_pose = np.asarray(ref, dtype=float).copy()
+    nan_pose[15, 0] = float("nan")  # a single NaN coordinate
+    with pytest.raises(ValueError):
+        compare_pose(ref, nan_pose.tolist())
 
 
 # --- authoring sanity check + checkpoint building ---------------------------
