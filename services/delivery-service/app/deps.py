@@ -1,12 +1,16 @@
 """FastAPI dependencies: session auth + owner gate."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
+import jwt
 from fastapi import Depends, Header, HTTPException
 
 from .auth import decode_session_token
 from .config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -22,7 +26,10 @@ def current_user(authorization: str = Header(default="")) -> SessionUser:
     token = authorization.split(" ", 1)[1].strip()
     try:
         payload = decode_session_token(token)
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="invalid or expired session")
     except Exception:
+        logger.exception("unexpected error decoding session token")
         raise HTTPException(status_code=401, detail="invalid or expired session")
     return SessionUser(
         user_id=payload["sub"],

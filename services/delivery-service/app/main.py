@@ -1,7 +1,11 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .routes import admin, auth, feed, movements, payment, playback
+
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="Ayla delivery-service", version="0.1.0")
 

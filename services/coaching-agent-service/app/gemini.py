@@ -6,10 +6,13 @@ student's own history, and NEVER comparative to other students.
 from __future__ import annotations
 
 import json
+import logging
 
 import httpx
 
 from .config import get_settings
+
+logger = logging.getLogger(__name__)
 
 SYSTEM = (
     "You are Ayla, a movement coach for a Taichi-style practice app. "
@@ -49,9 +52,10 @@ def generate_coaching(attempts: list[dict], progress: list[dict],
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.7},
     }
     with httpx.Client(timeout=30) as client:
-        resp = client.post(url, params={"key": s.gemini_api_key}, json=body)
+        resp = client.post(url, headers={"x-goog-api-key": s.gemini_api_key}, json=body)
     if resp.status_code != 200:
-        raise RuntimeError(f"gemini error {resp.status_code}: {resp.text}")
+        logger.error("gemini error %s: %s", resp.status_code, resp.text)
+        raise RuntimeError(f"gemini error {resp.status_code}")
 
     data = resp.json()
     try:

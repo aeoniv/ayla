@@ -1,6 +1,9 @@
+import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_INSECURE_DEFAULT_SESSION_SECRET = "dev-only-change-me"
 
 
 class Settings(BaseSettings):
@@ -30,7 +33,7 @@ class Settings(BaseSettings):
     signer_service_account: str = ""
 
     # Session tokens
-    session_secret: str = "dev-only-change-me"
+    session_secret: str = _INSECURE_DEFAULT_SESSION_SECRET
     session_ttl_seconds: int = 60 * 60 * 24 * 7  # 7 days
 
     # Free preview cap on the MAIN video, in seconds (variants get 0).
@@ -46,4 +49,9 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    # K_SERVICE is set by Cloud Run on every deployed revision; a dev-only
+    # secret reaching a real deployment would make session JWTs forgeable.
+    if os.getenv("K_SERVICE") and settings.session_secret == _INSECURE_DEFAULT_SESSION_SECRET:
+        raise RuntimeError("SESSION_SECRET must be set to a real secret in deployed environments")
+    return settings

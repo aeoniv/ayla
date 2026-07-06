@@ -1,6 +1,9 @@
+import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_INSECURE_DEFAULT_SESSION_SECRET = "dev-only-change-me"
 
 
 class Settings(BaseSettings):
@@ -9,7 +12,7 @@ class Settings(BaseSettings):
     gcp_project_id: str = ""
 
     # Must match delivery-service so we can validate its session JWTs.
-    session_secret: str = "dev-only-change-me"
+    session_secret: str = _INSECURE_DEFAULT_SESSION_SECRET
 
     # Owner chose Gemini 3.1 Flash-Lite (not Anthropic) for coaching.
     gemini_api_key: str = ""
@@ -24,4 +27,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    if os.getenv("K_SERVICE") and settings.session_secret == _INSECURE_DEFAULT_SESSION_SECRET:
+        raise RuntimeError("SESSION_SECRET must be set to a real secret in deployed environments")
+    return settings

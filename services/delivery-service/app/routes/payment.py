@@ -108,11 +108,13 @@ async def payment_webhook(request: Request):
     """
     s = get_settings()
 
-    # 1) Verify the update really came from Telegram.
-    if s.telegram_webhook_secret:
-        got = request.headers.get("x-telegram-bot-api-secret-token", "")
-        if got != s.telegram_webhook_secret:
-            raise HTTPException(403, "bad webhook secret")
+    # 1) Verify the update really came from Telegram. Fail closed: an unset
+    # secret must never be treated as "no check required".
+    if not s.telegram_webhook_secret:
+        raise HTTPException(500, "telegram_webhook_secret is not configured")
+    got = request.headers.get("x-telegram-bot-api-secret-token", "")
+    if got != s.telegram_webhook_secret:
+        raise HTTPException(403, "bad webhook secret")
 
     update = await request.json()
 

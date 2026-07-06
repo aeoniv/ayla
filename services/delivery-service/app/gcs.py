@@ -5,6 +5,7 @@ empty until content is uploaded via the Phase 3 authoring flow.
 """
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from functools import lru_cache
 
@@ -13,6 +14,8 @@ from google.auth.transport.requests import Request
 from google.cloud import storage
 
 from .config import get_settings
+
+logger = logging.getLogger(__name__)
 
 _creds = None
 
@@ -56,7 +59,7 @@ def delete(path: str) -> None:
     try:
         _client().bucket(get_settings().gcs_bucket).blob(path).delete()
     except Exception:
-        pass
+        logger.exception("failed to delete gcs object during rollback: %s", path)
 
 
 def sign(path: str | None) -> str | None:
