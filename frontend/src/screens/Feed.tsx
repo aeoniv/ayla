@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CoachResult, FeedItem, coachNext, getFeed } from "../api/client";
+import { FeedItem, getFeed } from "../api/client";
 import MovementCard from "../components/MovementCard";
 import Wallet from "../components/Wallet";
 import { SettingsIcon, WalletIcon } from "../components/icons";
@@ -17,22 +17,6 @@ export default function Feed({ isOwner, userId, onOpenAdmin, onPractice }: Props
   const [error, setError] = useState<string | null>(null);
   const [walletOpen, setWalletOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-
-  // Direct coach trigger — no full practice session needed, so the swarm
-  // agent (ix64-agent-ayla via delivery-service's /coach/next proxy) can be
-  // reached straight from the feed.
-  const [coachOpen, setCoachOpen] = useState(false);
-  const [coachLoading, setCoachLoading] = useState(false);
-  const [coach, setCoach] = useState<CoachResult | null>(null);
-  const [coachError, setCoachError] = useState<string | null>(null);
-
-  function openCoach() {
-    setCoachOpen(true); setCoachLoading(true); setCoach(null); setCoachError(null);
-    coachNext()
-      .then(setCoach)
-      .catch((e) => setCoachError(String(e)))
-      .finally(() => setCoachLoading(false));
-  }
 
   useEffect(() => {
     getFeed()
@@ -66,7 +50,6 @@ export default function Feed({ isOwner, userId, onOpenAdmin, onPractice }: Props
       <button className="wallet-btn" onClick={() => (isOwner ? onOpenAdmin() : setWalletOpen(true))}>
         {isOwner ? <SettingsIcon /> : <WalletIcon />}
       </button>
-      <button className="coach-btn" onClick={openCoach}>Coach</button>
       <div className="feed" ref={containerRef}>
         {items.map((it) => (
           <div key={it.movement_id} data-mid={it.movement_id} className="feed-slide">
@@ -80,24 +63,6 @@ export default function Feed({ isOwner, userId, onOpenAdmin, onPractice }: Props
         ))}
       </div>
       {walletOpen && <Wallet isOwner={isOwner} onClose={() => setWalletOpen(false)} />}
-      {coachOpen && (
-        <div className="coach-overlay" onClick={() => setCoachOpen(false)}>
-          <div className="coach" onClick={(e) => e.stopPropagation()}>
-            <h3>Your coach</h3>
-            {coachLoading && <p>Thinking…</p>}
-            {coachError && <p>Could not reach your coach.<br />{coachError}</p>}
-            {coach && (
-              <>
-                <p>{coach.note}</p>
-                {coach.suggested_next.movement_id && (
-                  <p className="next">Try next: {coach.suggested_next.movement_id}</p>
-                )}
-              </>
-            )}
-            <button onClick={() => setCoachOpen(false)}>Close</button>
-          </div>
-        </div>
-      )}
     </>
   );
 }
