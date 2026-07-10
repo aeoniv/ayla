@@ -16,7 +16,8 @@ from .config import get_settings
 
 @lru_cache
 def db() -> firestore.Client:
-    return firestore.Client(project=get_settings().gcp_project_id or None)
+    s = get_settings()
+    return firestore.Client(project=s.gcp_project_id or None, database=s.firestore_database_id)
 
 
 def has_movement_entitlement(user_id: str, movement_id: str) -> bool:

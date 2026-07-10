@@ -32,7 +32,7 @@ resource "google_project_service" "enabled" {
 # ---------------------------------------------------------------------------
 resource "google_firestore_database" "default" {
   project     = var.project_id
-  name        = "(default)"
+  name        = var.firestore_database_id
   location_id = var.region
   type        = "FIRESTORE_NATIVE"
 
@@ -209,6 +209,10 @@ resource "google_cloud_run_v2_service" "delivery" {
         value = var.project_id
       }
       env {
+        name  = "FIRESTORE_DATABASE_ID"
+        value = var.firestore_database_id
+      }
+      env {
         name  = "GCS_BUCKET"
         value = google_storage_bucket.video.name
       }
@@ -339,6 +343,10 @@ resource "google_cloud_run_v2_service" "coaching" {
         value = var.project_id
       }
       env {
+        name  = "FIRESTORE_DATABASE_ID"
+        value = var.firestore_database_id
+      }
+      env {
         name  = "GEMINI_MODEL"
         value = var.gemini_model
       }
@@ -398,6 +406,10 @@ resource "google_cloud_run_v2_service" "pose" {
       env {
         name  = "GCP_PROJECT_ID"
         value = var.project_id
+      }
+      env {
+        name  = "FIRESTORE_DATABASE_ID"
+        value = var.firestore_database_id
       }
       env {
         name  = "GCS_BUCKET"

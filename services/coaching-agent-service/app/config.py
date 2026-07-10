@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     gcp_project_id: str = ""
+    firestore_database_id: str = "(default)"
 
     # Must match delivery-service so we can validate its session JWTs.
     session_secret: str = _INSECURE_DEFAULT_SESSION_SECRET

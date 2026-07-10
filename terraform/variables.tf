@@ -9,6 +9,12 @@ variable "region" {
   default     = "us-central1"
 }
 
+variable "firestore_database_id" {
+  type        = string
+  description = "Firestore database id. Use a non-default name when project_id is shared with another app."
+  default     = "(default)"
+}
+
 variable "video_bucket_name" {
   type        = string
   description = "Globally-unique name for the single VoD bucket the service may sign URLs for."

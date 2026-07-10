@@ -24,6 +24,9 @@ class Settings(BaseSettings):
 
     # GCP
     gcp_project_id: str = ""
+    # Firestore database id. "(default)" unless this deployment shares a GCP
+    # project with another app and needs its own isolated database.
+    firestore_database_id: str = "(default)"
     gcs_bucket: str = ""
     # How long signed video URLs stay valid (seconds).
     signed_url_ttl_seconds: int = 3600

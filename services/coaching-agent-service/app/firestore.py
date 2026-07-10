@@ -13,7 +13,8 @@ from .config import get_settings
 
 @lru_cache
 def db() -> firestore.Client:
-    return firestore.Client(project=get_settings().gcp_project_id or None)
+    s = get_settings()
+    return firestore.Client(project=s.gcp_project_id or None, database=s.firestore_database_id)
 
 
 def recent_attempts(user_id: str, limit: int) -> list[dict]:

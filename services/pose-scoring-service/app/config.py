@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     gcp_project_id: str = ""
+    firestore_database_id: str = "(default)"
     gcs_bucket: str = ""
 
     # MUST match delivery-service so we can validate its session JWTs.
