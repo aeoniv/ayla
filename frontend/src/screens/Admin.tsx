@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AdminUser, AdminUserDetail, Catalog, CourseMember, createAvatar, createMovement,
   createStyle, createVariant, getAdminUserDetail, getAdminUsers, getCatalog,
-  getCourseMembers, getRevenue, Revenue,
+  getCourseMembers, getRevenue, Revenue, uploadVideo,
 } from "../api/client";
 import {
   BackIcon, EyeIcon, TargetIcon, UnlockIcon, UsersIcon,
@@ -157,9 +157,21 @@ function StudioTab(
             cat={cat}
             busy={busy}
             onAdd={async (d) => {
-              setBusy(true); setMsg(null);
+              setBusy(true); setMsg("uploading videos…");
               try {
-                const result = await createMovement(d);
+                // Videos go straight to GCS (see uploadVideo) — the create call
+                // then carries only the object paths, so it can't hit Cloud Run's
+                // 32 MiB request cap that broke the old multipart upload.
+                const [teaserPath, fullPath] = await Promise.all([
+                  uploadVideo("teaser", d.teaser),
+                  uploadVideo("full", d.full),
+                ]);
+                setMsg("creating course…");
+                const result = await createMovement({
+                  name: d.name, description: d.description, styleId: d.styleId,
+                  priceStars: d.priceStars, checkpoints: d.checkpoints,
+                  teaserPath, fullPath,
+                });
                 setMsg(`movement created ✓ (${result.reference_status === "pending"
                   ? "open Studio to author checkpoints"
                   : `${result.checkpoint_count} checkpoints auto-extracted`})`);
@@ -200,7 +212,16 @@ function StudioTab(
             )}
             <MembersPanel movementId={m.movement_id} />
             <AddVariant movementId={m.movement_id} cat={cat!} busy={busy}
-              onAdd={(d) => run("variant", () => createVariant(d))} primary />
+              onAdd={(d) => run("variant", async () => {
+                const [teaserPath, fullPath] = await Promise.all([
+                  uploadVideo("teaser", d.teaser),
+                  uploadVideo("full", d.full),
+                ]);
+                return createVariant({
+                  movementId: d.movementId, styleId: d.styleId, avatarId: d.avatarId,
+                  priceStars: d.priceStars, teaserPath, fullPath,
+                });
+              })} primary />
           </div>
         </div>
       ))}

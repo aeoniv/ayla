@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..deps import SessionUser, current_user
+from ..deps import SessionUser, current_user, is_owner
 from ..firestore import db, has_movement_entitlement, has_skip_guidance, has_variant_entitlement
 from ..gcs import sign
 from ..models import VariantItem
@@ -18,7 +18,10 @@ def full_video(movement_id: str, user: SessionUser = Depends(current_user)):
     mv = db().collection("movements").document(movement_id).get()
     if not mv.exists:
         raise HTTPException(status_code=404, detail="movement not found")
-    if not has_movement_entitlement(user.user_id, movement_id):
+    # The owner authored the content — the Studio loads the full video to author
+    # checkpoints (and to test-practice) without buying it back. Mirrors the
+    # owner bypass in pose-scoring-service's _require_entitlement.
+    if not is_owner(user) and not has_movement_entitlement(user.user_id, movement_id):
         raise HTTPException(status_code=403, detail="entitlement required")
     d = mv.to_dict()
     return {

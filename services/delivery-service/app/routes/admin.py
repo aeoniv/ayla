@@ -1,27 +1,38 @@
 """Phase 3 — owner authoring flow.
 
-Owner-only (gated by OWNER_TELEGRAM_ID via require_owner). Uploads videos to
-GCS, enforces the teaser ≤12s rule, and for full movements calls the Phase 2
+Owner-only (gated by OWNER_TELEGRAM_ID via require_owner). Videos are uploaded
+by the browser DIRECTLY to GCS via signed PUT URLs (see /admin/upload-url) —
+never proxied through this service, which would hit Cloud Run's 32 MiB request
+cap. The create endpoints then take the uploaded object paths, enforce the
+teaser ≤12s rule, and for auto-authored movements call the Phase 2
 pose-scoring-service /score/authoring to extract checkpoint reference poses.
 """
 from __future__ import annotations
 
-import json
 import os
 import tempfile
+import uuid
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException
 from google.cloud import firestore as fs
+from pydantic import BaseModel
 
 from ..config import get_settings
 from ..deps import SessionUser, require_owner
 from ..firestore import db, doc_exists
+from ..gcs import blob_exists
+from ..gcs import copy as gcs_copy
 from ..gcs import delete as gcs_delete
-from ..gcs import upload_file
+from ..gcs import download_to, signed_upload_url, upload_file
 from ..media import faststart_inplace, video_duration_seconds
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+# Client-uploaded videos land here first; create endpoints move them to their
+# canonical movements/ or variants/ path. Only objects under this prefix may be
+# referenced when creating content.
+UPLOAD_PREFIX = "uploads"
 
 TELEGRAM_API = "https://api.telegram.org"
 
@@ -304,11 +315,6 @@ async def revenue(limit: int = 25, owner: SessionUser = Depends(require_owner)):
     }
 
 
-async def _save_temp(upload: UploadFile, path: str) -> None:
-    with open(path, "wb") as f:
-        f.write(await upload.read())
-
-
 def _check_teaser_duration(local_path: str) -> float:
     s = get_settings()
     try:
@@ -323,17 +329,33 @@ def _check_teaser_duration(local_path: str) -> float:
     return dur
 
 
-def _parse_checkpoints(raw: str | None) -> list[float] | None:
-    """Return parsed checkpoints, or None when the caller omitted them (studio flow)."""
-    if raw is None or raw.strip() == "":
-        return None
-    try:
-        vals = json.loads(raw)
-    except json.JSONDecodeError:
-        raise HTTPException(400, "checkpoint_seconds must be a JSON array")
-    if not isinstance(vals, list) or not all(isinstance(v, (int, float)) for v in vals):
-        raise HTTPException(400, "checkpoint_seconds must be an array of numbers")
-    return [float(v) for v in vals] if vals else None
+def _require_upload(path: str, label: str) -> None:
+    """Reject anything that isn't a real object the client just uploaded.
+
+    Only objects under UPLOAD_PREFIX are accepted, so a create call can never be
+    tricked into referencing (and re-signing) an arbitrary bucket path.
+    """
+    if not path or not path.startswith(UPLOAD_PREFIX + "/"):
+        raise HTTPException(400, f"{label}_path must be an uploaded object under {UPLOAD_PREFIX}/")
+    if not blob_exists(path):
+        raise HTTPException(400, f"{label} upload not found — did the upload finish?")
+
+
+def _place_videos(teaser_src: str, full_src: str, teaser_dst: str, full_dst: str) -> None:
+    """Move two client-uploaded staging videos to their canonical paths.
+
+    Teaser is downloaded to enforce the ≤12s rule and faststarted (it's tiny).
+    The full video is copied SERVER-SIDE (never pulled into this instance) so an
+    arbitrarily large reference video can't OOM Cloud Run. Callers roll back the
+    canonical objects on any later failure; staging is cleared by the caller.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        lt = os.path.join(tmp, "t.mp4")
+        download_to(teaser_src, lt)
+        _check_teaser_duration(lt)
+        faststart_inplace(lt)
+        upload_file(teaser_dst, lt)
+    gcs_copy(full_src, full_dst)
 
 
 async def _call_authoring(movement_id: str, style_id: str, full_path: str,
@@ -358,43 +380,78 @@ async def _call_authoring(movement_id: str, style_id: str, full_path: str,
     return resp.json()
 
 
+class UploadUrlRequest(BaseModel):
+    kind: str                       # "teaser" | "full"
+    content_type: str = "video/mp4"
+
+
+class CreateMovementRequest(BaseModel):
+    name: str
+    style_id: str
+    price_stars: int
+    teaser_path: str                # object path from /admin/upload-url
+    full_path: str
+    description: str = ""
+    checkpoint_seconds: list[float] | None = None  # omit/empty -> author via Studio
+
+
+class CreateVariantRequest(BaseModel):
+    movement_id: str
+    style_id: str
+    avatar_id: str
+    price_stars: int
+    teaser_path: str
+    full_path: str
+
+
+@router.post("/upload-url")
+def create_upload_url(body: UploadUrlRequest, owner: SessionUser = Depends(require_owner)):
+    """Mint a signed PUT URL so the browser uploads a video straight to GCS.
+
+    The browser PUTs the file bytes to `url` (with a `Content-Type` header equal
+    to `content_type`), then passes `path` back to /admin/movement or
+    /admin/movement-variant. This keeps large videos off the Cloud Run request
+    path entirely (its 32 MiB body cap is what made big uploads fail).
+    """
+    if body.kind not in ("teaser", "full"):
+        raise HTTPException(400, "kind must be 'teaser' or 'full'")
+    content_type = body.content_type or "video/mp4"
+    path = f"{UPLOAD_PREFIX}/{uuid.uuid4().hex}/{body.kind}.mp4"
+    return {"path": path, "url": signed_upload_url(path, content_type), "content_type": content_type}
+
+
 @router.post("/movement")
-async def create_movement(
-    name: str = Form(...),
-    style_id: str = Form(...),
-    price_stars: int = Form(...),
-    checkpoint_seconds: str | None = Form(None),  # JSON array; omit to author via Studio later
-    teaser_video: UploadFile = File(...),
-    full_video: UploadFile = File(...),
-    description: str = Form(""),
-    owner: SessionUser = Depends(require_owner),
-):
-    if not doc_exists("styles", style_id):
+async def create_movement(body: CreateMovementRequest, owner: SessionUser = Depends(require_owner)):
+    if not doc_exists("styles", body.style_id):
         raise HTTPException(400, "unknown style_id")
-    checkpoints = _parse_checkpoints(checkpoint_seconds)
+    _require_upload(body.teaser_path, "teaser")
+    _require_upload(body.full_path, "full")
+    checkpoints = body.checkpoint_seconds or None  # empty list -> studio flow
 
     ref = db().collection("movements").document()
     mid = ref.id
     teaser_path = f"movements/{mid}/teaser.mp4"
     full_path = f"movements/{mid}/full.mp4"
 
-    with tempfile.TemporaryDirectory() as tmp:
-        lt, lf = os.path.join(tmp, "t.mp4"), os.path.join(tmp, "f.mp4")
-        await _save_temp(teaser_video, lt)
-        await _save_temp(full_video, lf)
-        _check_teaser_duration(lt)
-        faststart_inplace(lt)
-        faststart_inplace(lf)
-        upload_file(teaser_path, lt)
-        upload_file(full_path, lf)
+    try:
+        _place_videos(body.teaser_path, body.full_path, teaser_path, full_path)
+    except Exception:
+        # Nothing is committed yet — drop any canonical object we may have
+        # written before re-raising (gcs_delete is best-effort / no-op if absent).
+        gcs_delete(teaser_path)
+        gcs_delete(full_path)
+        raise
+    finally:
+        gcs_delete(body.teaser_path)  # staging no longer needed either way
+        gcs_delete(body.full_path)
 
     ref.set({
-        "style_id": style_id,
-        "name": name,
-        "description": description.strip(),
+        "style_id": body.style_id,
+        "name": body.name,
+        "description": body.description.strip(),
         "teaser_video_path": teaser_path,
         "full_video_path": full_path,
-        "price_stars": int(price_stars),
+        "price_stars": int(body.price_stars),
         "reference_status": "pending" if checkpoints is None else "auto",
         "created_at": fs.SERVER_TIMESTAMP,
     })
@@ -403,8 +460,13 @@ async def create_movement(
     # If omitted the owner will author via the Studio and save an audited reference.
     if checkpoints is not None:
         try:
-            authored = await _call_authoring(mid, style_id, full_path, checkpoints)
-        except HTTPException:
+            authored = await _call_authoring(mid, body.style_id, full_path, checkpoints)
+        except Exception:
+            # Roll back the half-created movement on ANY authoring failure — an
+            # HTTPException, but also a timeout / connection reset to
+            # pose-scoring (httpx raises those, not HTTPException). Without this
+            # the catch missed them and left an orphaned movement in the catalog
+            # that can never be practiced.
             ref.delete()
             gcs_delete(teaser_path)
             gcs_delete(full_path)
@@ -418,44 +480,38 @@ async def create_movement(
 
 
 @router.post("/movement-variant")
-async def create_variant(
-    movement_id: str = Form(...),
-    style_id: str = Form(...),
-    avatar_id: str = Form(...),
-    price_stars: int = Form(...),
-    teaser_video: UploadFile = File(...),
-    full_video: UploadFile = File(...),
-    owner: SessionUser = Depends(require_owner),
-):
-    if not doc_exists("movements", movement_id):
+async def create_variant(body: CreateVariantRequest, owner: SessionUser = Depends(require_owner)):
+    if not doc_exists("movements", body.movement_id):
         raise HTTPException(400, "unknown movement_id")
-    if not doc_exists("styles", style_id):
+    if not doc_exists("styles", body.style_id):
         raise HTTPException(400, "unknown style_id")
-    if not doc_exists("avatars", avatar_id):
+    if not doc_exists("avatars", body.avatar_id):
         raise HTTPException(400, "unknown avatar_id")
+    _require_upload(body.teaser_path, "teaser")
+    _require_upload(body.full_path, "full")
 
     ref = db().collection("movement_style_variants").document()
     vid = ref.id
     teaser_path = f"variants/{vid}/teaser.mp4"
     full_path = f"variants/{vid}/full.mp4"
 
-    with tempfile.TemporaryDirectory() as tmp:
-        lt, lf = os.path.join(tmp, "t.mp4"), os.path.join(tmp, "f.mp4")
-        await _save_temp(teaser_video, lt)
-        await _save_temp(full_video, lf)
-        _check_teaser_duration(lt)
-        faststart_inplace(lt)
-        faststart_inplace(lf)
-        upload_file(teaser_path, lt)
-        upload_file(full_path, lf)
+    try:
+        _place_videos(body.teaser_path, body.full_path, teaser_path, full_path)
+    except Exception:
+        gcs_delete(teaser_path)
+        gcs_delete(full_path)
+        raise
+    finally:
+        gcs_delete(body.teaser_path)
+        gcs_delete(body.full_path)
 
     ref.set({
-        "movement_id": movement_id,
-        "style_id": style_id,
-        "avatar_id": avatar_id,
+        "movement_id": body.movement_id,
+        "style_id": body.style_id,
+        "avatar_id": body.avatar_id,
         "teaser_video_path": teaser_path,
         "full_video_path": full_path,
-        "price_stars": int(price_stars),
+        "price_stars": int(body.price_stars),
         "created_at": fs.SERVER_TIMESTAMP,
     })
     return {"ok": True, "variant_id": vid}

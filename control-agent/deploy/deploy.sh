@@ -35,8 +35,14 @@ echo ">>> Manual deploy of $SERVICE to project $PROJECT ($REGION)"
 read -r -p "Confirm deploy of $SERVICE? [y/N] " ans
 [ "$ans" = "y" ] || { echo "aborted"; exit 1; }
 
+# --allow-unauthenticated: the services are invoked directly by users' browsers
+# (Telegram Mini App, bearing the app's own session JWT) and by Telegram's
+# payment webhook — neither can present a Google identity token. Auth is
+# enforced in-app (session JWT / webhook secret / internal key), and terraform
+# grants the matching allUsers run.invoker binding. Keep this in sync with the
+# terraform posture so a redeploy never silently revokes public access.
 gcloud run deploy "$SERVICE" \
   --source "$SRC" \
   --project "$PROJECT" \
   --region "$REGION" \
-  --no-allow-unauthenticated
+  --allow-unauthenticated

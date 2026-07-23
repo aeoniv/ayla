@@ -38,6 +38,17 @@ def current_user(authorization: str = Header(default="")) -> SessionUser:
     )
 
 
+def is_owner(user: SessionUser) -> bool:
+    """Non-raising owner check for entitlement bypasses.
+
+    The owner authored every movement, so they may fully watch/practice their
+    own content without a purchase entitlement — the same bypass pose-scoring-
+    service applies in _require_entitlement. The role claim is derived server-
+    side from owner_telegram_id at auth time, so it's authoritative here.
+    """
+    return user.role == "owner"
+
+
 def require_owner(user: SessionUser = Depends(current_user)) -> SessionUser:
     if user.role != "owner" or user.telegram_id != get_settings().owner_telegram_id:
         raise HTTPException(status_code=403, detail="owner only")
