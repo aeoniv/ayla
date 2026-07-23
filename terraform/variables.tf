@@ -20,6 +20,15 @@ variable "video_bucket_name" {
   description = "Globally-unique name for the single VoD bucket the service may sign URLs for."
 }
 
+variable "web_app_origins" {
+  type        = list(string)
+  description = "Origins allowed to PUT videos directly to the bucket via signed upload URLs (the Mini App hosting domains). Must match the delivery-service CORS allow_origins."
+  default = [
+    "https://ayla-bot.web.app",
+    "https://studio-3654876024-6b075.web.app",
+  ]
+}
+
 variable "service_name" {
   type        = string
   description = "Cloud Run service name."

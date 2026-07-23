@@ -19,20 +19,34 @@ enforcement, and Stars invoice creation.
 | POST | `/playback/progress` | server-authoritative 12s enforcement |
 | POST | `/payment/create-invoice` | Telegram Stars (XTR) invoice link |
 | POST | `/payment/webhook` | successful_payment + Stars renewals; secret-verified, idempotent |
-| POST | `/admin/movement` | **owner-only**: upload teaser(≤12s)+full, author checkpoints, publish |
-| POST | `/admin/movement-variant` | **owner-only**: upload variant pair, link via `movement_style_variants` |
+| POST | `/admin/upload-url` | **owner-only**: signed PUT URL to upload a video straight to GCS |
+| POST | `/admin/movement` | **owner-only** (JSON): create from uploaded paths, author checkpoints, publish |
+| POST | `/admin/movement-variant` | **owner-only** (JSON): create variant from uploaded paths |
 | POST | `/admin/avatar` | **owner-only**: register an avatar under a style |
 | GET  | `/healthz` | liveness |
 
 ## Phase 3 — owner authoring flow
 Owner-only (gated by `require_owner`: session role `owner` AND telegram id ==
-`OWNER_TELEGRAM_ID`). `/admin/movement`:
-1. validates `style_id`, parses `checkpoint_seconds` (JSON array);
-2. saves uploads to temp, **rejects the teaser if it exceeds
-   `MAX_TEASER_SECONDS` (12s)** via ffprobe — before any GCS write;
-3. uploads teaser+full to `movements/{id}/…`, creates the movement doc;
-4. calls pose-scoring `/score/authoring` (with `INTERNAL_API_KEY`) to extract
-   checkpoint reference poses; **rolls back the doc + blobs if authoring fails**.
+`OWNER_TELEGRAM_ID`).
+
+Videos are **not** proxied through this service — Cloud Run caps request bodies
+at 32 MiB, which failed on full-movement videos (`TypeError: Failed to fetch`
+in the browser). Instead the client:
+1. calls `/admin/upload-url` (once per video) → a signed PUT URL + object path
+   under the `uploads/` prefix;
+2. PUTs the file **directly to GCS** (matching `Content-Type: video/mp4`);
+3. calls `/admin/movement` (JSON) with the two object paths.
+
+`/admin/movement` then:
+1. validates `style_id` and that both paths are real objects under `uploads/`;
+2. downloads the **teaser** to **reject it if it exceeds `MAX_TEASER_SECONDS`
+   (12s)** via ffprobe, faststarts it, and writes it to `movements/{id}/teaser.mp4`;
+3. **server-side copies** the full video to `movements/{id}/full.mp4` (never
+   pulled into this instance, so an arbitrarily large reference can't OOM it),
+   clears the staging objects, and creates the movement doc;
+4. if `checkpoint_seconds` was supplied, calls pose-scoring `/score/authoring`
+   (with `INTERNAL_API_KEY`) to extract reference poses; **rolls back the doc +
+   blobs if authoring fails**. Omit `checkpoint_seconds` to author via the Studio.
 
 Needs `POSE_SCORING_URL` + `INTERNAL_API_KEY`, and the runtime SA now also needs
 **object create/delete** on the one bucket (authoring writes videos), in

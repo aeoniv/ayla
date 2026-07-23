@@ -53,6 +53,19 @@ resource "google_storage_bucket" "video" {
     enabled = true
   }
 
+  # The owner's browser uploads videos straight to GCS via signed PUT URLs
+  # (see delivery-service /admin/upload-url), which keeps large files off the
+  # Cloud Run request path (its 32 MiB body cap). A browser PUT is cross-origin,
+  # so the bucket must allow these origins, the PUT method, and the Content-Type
+  # request header. public_access_prevention still applies — signed URLs are
+  # authenticated by signature, not by public ACLs.
+  cors {
+    origin          = var.web_app_origins
+    method          = ["PUT", "GET", "HEAD"]
+    response_header = ["Content-Type"]
+    max_age_seconds = 3600
+  }
+
   depends_on = [google_project_service.enabled]
 }
 

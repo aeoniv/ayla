@@ -150,32 +150,48 @@ export const createAvatar = (name: string, styleId: string) => {
   const f = new FormData(); f.append("name", name); f.append("style_id", styleId);
   return form<{ avatar_id: string }>(DELIVERY, "/admin/avatar", f);
 };
+// Videos are uploaded straight to GCS via a signed PUT URL (never proxied
+// through delivery-service, which caps request bodies at 32 MiB). Mint the URL,
+// PUT the bytes, and return the object path to hand to create-movement/variant.
+export const getUploadUrl = (kind: "teaser" | "full", contentType = "video/mp4") =>
+  req<{ path: string; url: string; content_type: string }>(DELIVERY, "/admin/upload-url", {
+    method: "POST", body: JSON.stringify({ kind, content_type: contentType }),
+  });
+
+export async function uploadVideo(kind: "teaser" | "full", file: File): Promise<string> {
+  const { path, url, content_type } = await getUploadUrl(kind);
+  // Direct-to-GCS PUT. The Content-Type must match what the URL was signed with.
+  const resp = await fetch(url, { method: "PUT", headers: { "Content-Type": content_type }, body: file });
+  if (!resp.ok) throw new ApiError(resp.status, `upload failed: ${await resp.text()}`);
+  return path;
+}
+
 export const createMovement = (d: {
   name: string; description: string; styleId: string; priceStars: number;
   checkpoints?: number[];   // omit → studio flow; backend skips auto-authoring
-  teaser: File; full: File;
-}) => {
-  const f = new FormData();
-  f.append("name", d.name); f.append("description", d.description);
-  f.append("style_id", d.styleId);
-  f.append("price_stars", String(d.priceStars));
-  if (d.checkpoints !== undefined)
-    f.append("checkpoint_seconds", JSON.stringify(d.checkpoints));
-  f.append("teaser_video", d.teaser); f.append("full_video", d.full);
-  return form<{ movement_id: string; checkpoint_count: number; reference_status: string }>(
-    DELIVERY, "/admin/movement", f,
+  teaserPath: string; fullPath: string;   // from uploadVideo()
+}) =>
+  req<{ movement_id: string; checkpoint_count: number; reference_status: string }>(
+    DELIVERY, "/admin/movement", {
+      method: "POST",
+      body: JSON.stringify({
+        name: d.name, description: d.description, style_id: d.styleId,
+        price_stars: d.priceStars, checkpoint_seconds: d.checkpoints,
+        teaser_path: d.teaserPath, full_path: d.fullPath,
+      }),
+    },
   );
-};
 export const createVariant = (d: {
   movementId: string; styleId: string; avatarId: string; priceStars: number;
-  teaser: File; full: File;
-}) => {
-  const f = new FormData();
-  f.append("movement_id", d.movementId); f.append("style_id", d.styleId);
-  f.append("avatar_id", d.avatarId); f.append("price_stars", String(d.priceStars));
-  f.append("teaser_video", d.teaser); f.append("full_video", d.full);
-  return form<{ variant_id: string }>(DELIVERY, "/admin/movement-variant", f);
-};
+  teaserPath: string; fullPath: string;   // from uploadVideo()
+}) =>
+  req<{ variant_id: string }>(DELIVERY, "/admin/movement-variant", {
+    method: "POST",
+    body: JSON.stringify({
+      movement_id: d.movementId, style_id: d.styleId, avatar_id: d.avatarId,
+      price_stars: d.priceStars, teaser_path: d.teaserPath, full_path: d.fullPath,
+    }),
+  });
 
 export const getFullVideo = (movementId: string) =>
   req<{
