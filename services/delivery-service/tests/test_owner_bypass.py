@@ -1,14 +1,18 @@
-"""Route tests for GET /movement/{id}/full entitlement gating.
+"""Route tests for the owner entitlement bypass across delivery-service.
 
-The Studio loads the full reference video via this endpoint the moment a new
-course is created. The owner has no *purchase* entitlement for their own
-freshly-uploaded movement, so without an owner bypass authoring is impossible
-(the Studio dies with 403 "entitlement required"). These tests lock in:
+The owner authored every movement, so they may fully watch/practice their own
+content without a purchase entitlement (the same bypass pose-scoring-service
+applies). Without it the Studio can't load the video it just uploaded, and the
+owner would be prompted to buy their own content. These tests lock in:
 
-  - owner  -> gets the signed URL even with no entitlement (authoring works)
-  - student with entitlement -> gets the signed URL
-  - student without entitlement -> 403
-  - missing movement -> 404
+  full_video (Studio / practice video load):
+    - owner without entitlement -> signed URL
+    - entitled student -> signed URL
+    - un-entitled student -> 403
+    - missing movement -> 404
+  playback progress (12s free-preview cap):
+    - owner -> main video never locked, variant never locked
+    - un-entitled student -> locked past the cap
 """
 from fastapi.testclient import TestClient
 
@@ -107,5 +111,56 @@ def test_missing_movement_404(monkeypatch):
     try:
         resp = client.get("/movement/m1/full")
         assert resp.status_code == 404
+    finally:
+        _teardown()
+
+
+# --- playback owner bypass ---------------------------------------------------
+
+def _playback_client(monkeypatch, *, entitled, role, watched=99.0):
+    from app.routes import playback
+
+    monkeypatch.setattr(playback, "has_movement_entitlement", lambda uid, mid: entitled)
+    monkeypatch.setattr(playback, "has_variant_entitlement", lambda uid, vid: entitled)
+    monkeypatch.setattr(playback, "get_watched_seconds", lambda uid, mid: watched)
+    monkeypatch.setattr(playback, "record_watched_seconds", lambda uid, mid, secs: watched)
+
+    def _fake_user():
+        return SessionUser(user_id="u1", telegram_id=42, role=role)
+
+    main.app.dependency_overrides[current_user] = _fake_user
+    return TestClient(main.app)
+
+
+def test_owner_main_video_never_locked(monkeypatch):
+    # Owner has no entitlement and has "watched" well past the 12s cap.
+    client = _playback_client(monkeypatch, entitled=False, role="owner", watched=99.0)
+    try:
+        resp = client.post("/playback/progress", json={"movement_id": "m1", "seconds": 99.0})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["locked"] is False
+    finally:
+        _teardown()
+
+
+def test_student_main_video_locked_past_cap(monkeypatch):
+    client = _playback_client(monkeypatch, entitled=False, role="student", watched=99.0)
+    try:
+        resp = client.post("/playback/progress", json={"movement_id": "m1", "seconds": 99.0})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["locked"] is True
+    finally:
+        _teardown()
+
+
+def test_owner_variant_never_locked(monkeypatch):
+    client = _playback_client(monkeypatch, entitled=False, role="owner")
+    try:
+        resp = client.post(
+            "/playback/progress",
+            json={"movement_id": "m1", "variant_id": "v1", "seconds": 3.0},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["locked"] is False
     finally:
         _teardown()

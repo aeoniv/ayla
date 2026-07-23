@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 
-from ..deps import SessionUser, current_user
+from ..deps import SessionUser, current_user, is_owner
 from ..firestore import (  # noqa: I001
     referral_summary,
     db, entitled_movement_set, list_user_entitlements, liked_set, toggle_like,
@@ -71,7 +71,11 @@ def feed(limit: int = 20, user: SessionUser = Depends(current_user)):
 
     top_ids = [doc.id for doc in top]
     liked = liked_set(user.user_id, top_ids)
-    entitled = entitled_movement_set(user.user_id, top_ids)
+    # The owner authored every movement — surface their own catalog as unlocked
+    # so a preview never hits the 12s lock and "Learn" never prompts them to buy
+    # their own content (same bypass as playback / full-video).
+    owner = is_owner(user)
+    entitled = set(top_ids) if owner else entitled_movement_set(user.user_id, top_ids)
     items: list[FeedItem] = []
     for doc in top:
         d = doc.to_dict()
