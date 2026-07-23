@@ -68,9 +68,13 @@ export default function Practice({ movementId, styleId, onExit }: Props) {
     setPhase("scoring");
     try {
       await submitAttempt(movementId, styleId, collected.current);
-      setCoach(await coachNext());
-      setPhase("done");
-    } catch (e) { setError(String(e)); setPhase("error"); }
+    } catch (e) { setError(String(e)); setPhase("error"); return; }
+    // The attempt is the real deliverable; the coach note is a best-effort
+    // bonus. A coaching failure (e.g. Gemini not configured → 502) must not
+    // turn a successfully scored run into an error — the done view already
+    // renders gracefully with no coach note.
+    try { setCoach(await coachNext()); } catch { /* no coach note this run */ }
+    setPhase("done");
   }
 
   // --- preload (no gesture needed): video src, checkpoints, reference, model -
