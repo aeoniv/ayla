@@ -305,8 +305,18 @@ async def revenue(limit: int = 25, owner: SessionUser = Depends(require_owner)):
 
 
 async def _save_temp(upload: UploadFile, path: str) -> None:
+    # Stream to disk in chunks rather than reading the whole (video-sized) upload
+    # into memory at once — a full read of a large file can OOM a small Cloud Run
+    # instance mid-request. NOTE: this does not lift Cloud Run's 32 MiB HTTP/1
+    # request-body cap; a video above that limit is severed by Cloud Run before
+    # it reaches this handler (the browser sees "Failed to fetch") and must be
+    # uploaded directly to GCS instead of proxied through this endpoint.
     with open(path, "wb") as f:
-        f.write(await upload.read())
+        while True:
+            chunk = await upload.read(1024 * 1024)  # 1 MiB
+            if not chunk:
+                break
+            f.write(chunk)
 
 
 def _check_teaser_duration(local_path: str) -> float:
