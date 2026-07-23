@@ -37,6 +37,11 @@ in the browser). Instead the client:
 2. PUTs the file **directly to GCS** (matching `Content-Type: video/mp4`);
 3. calls `/admin/movement` (JSON) with the two object paths.
 
+> The video bucket must allow the Mini App origins to PUT (a cross-origin
+> upload). Terraform sets this (the `cors` block on the bucket); to apply it
+> **without** terraform, run `scripts/set-bucket-cors.sh` (`BUCKET=<gcs_bucket>`).
+> A missing CORS rule shows as `TypeError: Failed to fetch` on the browser PUT.
+
 `/admin/movement` then:
 1. validates `style_id` and that both paths are real objects under `uploads/`;
 2. downloads the **teaser** to **reject it if it exceeds `MAX_TEASER_SECONDS`
