@@ -404,7 +404,12 @@ async def create_movement(
     if checkpoints is not None:
         try:
             authored = await _call_authoring(mid, style_id, full_path, checkpoints)
-        except HTTPException:
+        except Exception:
+            # Roll back the half-created movement on ANY authoring failure — an
+            # HTTPException, but also a timeout / connection reset to
+            # pose-scoring (httpx raises those, not HTTPException). Without this
+            # the catch missed them and left an orphaned movement in the catalog
+            # that can never be practiced.
             ref.delete()
             gcs_delete(teaser_path)
             gcs_delete(full_path)

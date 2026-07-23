@@ -95,8 +95,14 @@ uvicorn app.main:app --reload --port 8080
 - `SESSION_SECRET` (a strong random value in prod)
 - Deploy to Cloud Run, then register the webhook:
   `setWebhook(url=<service>/payment/webhook, secret_token=<TELEGRAM_WEBHOOK_SECRET>,
-  allowed_updates=["message"])`. Set the same `TELEGRAM_WEBHOOK_SECRET` env var so
-  the service can verify the `X-Telegram-Bot-Api-Secret-Token` header.
+  allowed_updates=["message", "pre_checkout_query"])`. Set the same
+  `TELEGRAM_WEBHOOK_SECRET` env var so the service can verify the
+  `X-Telegram-Bot-Api-Secret-Token` header.
+  **`pre_checkout_query` is required**: Telegram sends it for every Stars
+  purchase and the bot must answer within 10s or the payment is auto-cancelled
+  and refunded (symptom: "paid but no access"). Omitting it from
+  `allowed_updates` stops those updates being delivered, so the invoice never
+  clears. Use `scripts/set-webhook.sh` to register it correctly.
 
 ### Entitlement grant (webhook)
 - Idempotent: the `entitlements` doc id **is** the `telegram_payment_charge_id`,
