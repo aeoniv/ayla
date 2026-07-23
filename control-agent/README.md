@@ -32,7 +32,13 @@ manual command (`./deploy.sh <service>`), with an interactive confirm. There is
    ```bash
    ss -tlnp | grep 8787     # must show 100.x.y.z:8787, NOT 0.0.0.0:8787
    ```
-   The Cloud Run services are deployed `--no-allow-unauthenticated`.
+   This Tailscale-only rule is about the **control-agent gateway**, not the app
+   services. The Cloud Run services (delivery/pose/coaching) are deployed
+   `--allow-unauthenticated` on purpose: browsers (the Telegram Mini App) and
+   Telegram's payment webhook call them directly and can't present a Google
+   identity token, so auth is enforced **in-app** — session JWT, the webhook
+   `secret_token`, and the internal API key — with the matching `allUsers`
+   `run.invoker` binding defined in terraform.
 2. **Privilege separation.** Run `monitor` and `deploy` as **separate OS
    users/hosts**. The monitor host has no gcloud deploy credentials; only the
    deploy host is authenticated with a service account holding

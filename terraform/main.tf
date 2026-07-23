@@ -383,8 +383,10 @@ resource "google_cloud_run_v2_service" "coaching" {
 }
 
 # ---------------------------------------------------------------------------
-# pose-scoring-service (stateless Cloud Run). Not publicly invocable; called by
-# delivery-service (authoring) and students with a valid session token.
+# pose-scoring-service (stateless Cloud Run). Invoked directly by the browser
+# (students send a valid session JWT) and by delivery-service (authoring, via
+# the shared internal API key). Like the other services it is publicly
+# invocable at the Cloud Run layer; auth is enforced in-app, not by IAM.
 # ---------------------------------------------------------------------------
 resource "google_cloud_run_v2_service" "pose" {
   name                = var.pose_service_name
@@ -445,4 +447,46 @@ resource "google_cloud_run_v2_service" "pose" {
   lifecycle {
     ignore_changes = [template[0].containers[0].image]
   }
+}
+
+# ---------------------------------------------------------------------------
+# Public invoke bindings.
+#
+# All three services are called DIRECTLY from users' browsers (the Telegram
+# Mini App), which present the app's own session JWT in the Authorization
+# header — NOT a Google-signed identity token — and delivery additionally
+# receives Telegram's payment webhook (Telegram cannot present a Google token
+# either). The frontend targets the *.run.app URLs directly (see
+# frontend/.env.production); there is no authenticating proxy/gateway in front.
+#
+# So the Cloud Run invoke layer must allow unauthenticated callers. This is NOT
+# "no auth": every endpoint enforces its own — session JWT (deps.current_user /
+# session.current_user), the Telegram webhook secret_token, or the internal API
+# key for the delivery->pose authoring call. Public invoker + app-level auth is
+# the standard posture for a public API backend that browsers hit directly.
+#
+# Tightening this to private would require fronting the services with an
+# authenticating gateway (e.g. Firebase Hosting rewrites injecting an ID token)
+# and repointing the frontend at same-origin paths — a larger change, and one
+# Telegram's direct webhook call still can't use.
+# ---------------------------------------------------------------------------
+resource "google_cloud_run_v2_service_iam_member" "delivery_public" {
+  name     = google_cloud_run_v2_service.delivery.name
+  location = google_cloud_run_v2_service.delivery.location
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "pose_public" {
+  name     = google_cloud_run_v2_service.pose.name
+  location = google_cloud_run_v2_service.pose.location
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "coaching_public" {
+  name     = google_cloud_run_v2_service.coaching.name
+  location = google_cloud_run_v2_service.coaching.location
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }
